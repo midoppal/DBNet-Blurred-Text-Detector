@@ -2,16 +2,18 @@
 import os, sys, shutil, subprocess, re, time
 from pathlib import Path
 import signal
+from contextlib import contextmanager
 signal.signal(signal.SIGINT,  lambda *_: sys.exit(130))
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
 
 # ---------- CONFIG ----------
 REPO_ROOT = Path(__file__).resolve().parent
 YAML_CFG  = "experiments/seg_detector/ic15_resnet50_deform_thre.yaml"
-CKPT_PATH = "./pretrained/ic15_resnet50.pth"
-# CKPT_PATH = "./workspace/SegDetectorModel-L1BalanceCELoss/model/final"
+# CKPT_PATH = "./pretrained/ic15_resnet50.pth"
+CKPT_PATH = "./workspace/SegDetectorModel-L1BalanceCELoss/model/final"
 
 DATASET_ROOT = REPO_ROOT / "datasets" / "icdar2015"
+TEST_LIST = DATASET_ROOT / "test_list.txt"
 TEST_IMAGES  = DATASET_ROOT / "test_images"
 ORIG_IMAGES  = DATASET_ROOT / "original_test_images"  # optional baseline location
 
@@ -142,6 +144,60 @@ def parse_length_dir_from_name(name: str):
     direction = m.group(2)  # None, 'left', or 'right'
     return length, direction
 
+# ---------------------------- .txt swapper ----------------------------
+def _read_canonical_names():
+    return [l.strip() for l in TEST_LIST.read_text(encoding="utf-8").splitlines() if l.strip()]
+
+def _available_name_map(search_dirs):
+    """
+    Return dict mapping BOTH full names and stems -> actual Path
+    so we handle ext changes (.jpg -> .png) gracefully.
+    """
+    m = {}
+    for d in search_dirs:
+        if not d.exists(): 
+            continue
+        for p in d.glob("*.*"):
+            m[p.name] = p
+            # if two files share a stem, keep the first seen
+            m.setdefault(p.stem, p)
+    return m
+
+def _filter_names_for_folder(blur_dir):
+    # try common layouts: <blur>/test_images, <blur>/left/test_images, <blur>/right/test_images,
+    # and (if you saved flat) <blur> itself
+    candidates = [
+        blur_dir / "test_images",
+        blur_dir / "left" / "test_images",
+        blur_dir / "right" / "test_images",
+        blur_dir
+    ]
+    avail = _available_name_map(candidates)
+
+    filtered = []
+    for nm in _read_canonical_names():
+        if nm in avail:
+            filtered.append(nm)  # exact match
+        else:
+            stem = Path(nm).stem
+            if stem in avail:
+                filtered.append(avail[stem].name)  # use actual filename (ext may differ)
+    return filtered
+
+@contextmanager
+def temporarily_replace_test_list(new_names):
+    """
+    Overwrite datasets/icdar2015/test_list.txt with new_names, then restore the original.
+    """
+    bak = TEST_LIST.with_suffix(".txt.bak")
+    shutil.copy2(TEST_LIST, bak)
+    try:
+        TEST_LIST.write_text("\n".join(new_names) + "\n", encoding="utf-8", newline="\n")
+        yield
+    finally:
+        bak.replace(TEST_LIST)
+# ------------------------------------------------------------
+
 def main():
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     blur_sets = list((DATASET_ROOT).glob(BLUR_GLOB))
@@ -169,10 +225,19 @@ def main():
         out_dir.mkdir(parents=True, exist_ok=True)
 
         print(f"\n[STEP] ({idx}/{total_sets}) Switching test_images -> {src} ({tag})")
-        mode = switch_test_images_to(src)
-        print(f"[STEP] test_images set via {mode}. Running eval...")
+        # mode = switch_test_images_to(src)
+        # print(f"[STEP] test_images set via {mode}. Running eval...")
 
-        rc, stdout, stderr = run_eval()
+        # rc, stdout, stderr = run_eval()
+        mode = switch_test_images_to(src)
+        names = _filter_names_for_folder(src)
+        if not names:
+            print(f"[skip] {tag}: no matching files found for test_list.txt")
+            continue
+        print(f"[STEP] test_images set via {mode}. Using {len(names)} names. Running eval...")
+        with temporarily_replace_test_list(names):
+            rc, stdout, stderr = run_eval()
+
         (out_dir / "stdout.log").write_text(stdout, encoding="utf-8")
         (out_dir / "stderr.log").write_text(stderr or "", encoding="utf-8")
 

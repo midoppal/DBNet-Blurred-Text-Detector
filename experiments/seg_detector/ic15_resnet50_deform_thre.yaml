@@ -23,9 +23,9 @@ define:
         representer:
             class: SegDetectorRepresenter
             max_candidates: 1000
-            thresh: 0.22        # sweep 0.18–0.28
-            box_thresh: 0.65    # sweep 0.55–0.70
-            unclip_ratio: 2.0
+            # thresh: 0.22        # sweep 0.18–0.28
+            box_thresh: 0.2    # sweep 0.55–0.70
+            # unclip_ratio: 2.0
         measurer:  
             class: QuadMeasurer
         visualizer:  
@@ -60,52 +60,52 @@ define:
                 epochs: 100
         epochs: 100
 
-    # validation: &validate
-    #     class: ValidationSettings
-    #     data_loaders:
-    #         icdar2015: 
-    #             class: DataLoader
-    #             dataset: ^validate_data
-    #             batch_size: 1
-    #             num_workers: 16
-    #             collect_fn:
-    #                 class: ICDARCollectFN
-    #     visualize: false
-    #     interval: 4500
-    #     exempt: 1
     validation: &validate
         class: ValidationSettings
-        visualize: false
-        interval: 20000    # validate at higher frequency than 4500 if you want quicker feedback
-        exempt: 1
         data_loaders:
-            icdar2015_clean:
+            icdar2015: 
                 class: DataLoader
-                dataset: ^validate_data_clean
+                dataset: ^validate_data
                 batch_size: 1
-                num_workers: 8
-                collect_fn: { class: ICDARCollectFN }
+                num_workers: 16
+                collect_fn:
+                    class: ICDARCollectFN
+        visualize: false
+        interval: 4500
+        exempt: 1
+    # validation: &validate
+    #     class: ValidationSettings
+    #     visualize: false
+    #     interval: 20000    # validate at higher frequency than 4500 if you want quicker feedback
+    #     exempt: 1
+    #     data_loaders:
+    #         icdar2015_clean:
+    #             class: DataLoader
+    #             dataset: ^validate_data_clean
+    #             batch_size: 1
+    #             num_workers: 8
+    #             collect_fn: { class: ICDARCollectFN }
 
-            icdar2015_blur_mild:
-                class: DataLoader
-                dataset: ^validate_data_blur_mild
-                batch_size: 1
-                num_workers: 8
-                collect_fn: { class: ICDARCollectFN }
+    #         icdar2015_blur_mild:
+    #             class: DataLoader
+    #             dataset: ^validate_data_blur_mild
+    #             batch_size: 1
+    #             num_workers: 8
+    #             collect_fn: { class: ICDARCollectFN }
 
-            icdar2015_blur_med:
-                class: DataLoader
-                dataset: ^validate_data_blur_med
-                batch_size: 1
-                num_workers: 8
-                collect_fn: { class: ICDARCollectFN }
+    #         icdar2015_blur_med:
+    #             class: DataLoader
+    #             dataset: ^validate_data_blur_med
+    #             batch_size: 1
+    #             num_workers: 8
+    #             collect_fn: { class: ICDARCollectFN }
 
-            icdar2015_blur_heavy:
-                class: DataLoader
-                dataset: ^validate_data_blur_heavy
-                batch_size: 1
-                num_workers: 8
-                collect_fn: { class: ICDARCollectFN }
+    #         icdar2015_blur_heavy:
+    #             class: DataLoader
+    #             dataset: ^validate_data_blur_heavy
+    #             batch_size: 1
+    #             num_workers: 8
+    #             collect_fn: { class: ICDARCollectFN }
     logger:
         class: Logger
         verbose: true
