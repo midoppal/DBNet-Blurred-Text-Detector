@@ -11,6 +11,8 @@ define:
             model: SegDetectorModel
             model_args:
                 backbone: deformable_resnet50
+                backbone_args:
+                    pretrained: false
                 decoder: SegDetector
                 decoder_args: 
                     adaptive: True
@@ -21,6 +23,9 @@ define:
         representer:
             class: SegDetectorRepresenter
             max_candidates: 1000
+            thresh: 0.22        # sweep 0.18–0.28
+            box_thresh: 0.65    # sweep 0.55–0.70
+            unclip_ratio: 2.0
         measurer:  
             class: QuadMeasurer
         visualizer:  
@@ -30,8 +35,8 @@ define:
         data_loader: 
             class: DataLoader
             dataset: ^train_data
-            batch_size: 16
-            num_workers: 16
+            batch_size: 1
+            num_workers: 2
         checkpoint: 
             class: Checkpoint
             start_epoch: 0
@@ -40,34 +45,67 @@ define:
         model_saver: 
             class: ModelSaver
             dir_path: model
-            save_interval: 3000
+            save_interval: 1500
             signal_path: save
         scheduler: 
             class: OptimizerScheduler
             optimizer: "SGD"
             optimizer_args:
-                lr: 0.007
+                lr: 0.001
                 momentum: 0.9
                 weight_decay: 0.0001
             learning_rate:  
                 class: DecayLearningRate
-                epochs: 1200
-        epochs: 1200
+                lr: 0.001
+                epochs: 100
+        epochs: 100
 
+    # validation: &validate
+    #     class: ValidationSettings
+    #     data_loaders:
+    #         icdar2015: 
+    #             class: DataLoader
+    #             dataset: ^validate_data
+    #             batch_size: 1
+    #             num_workers: 16
+    #             collect_fn:
+    #                 class: ICDARCollectFN
+    #     visualize: false
+    #     interval: 4500
+    #     exempt: 1
     validation: &validate
         class: ValidationSettings
-        data_loaders:
-            icdar2015: 
-                class: DataLoader
-                dataset: ^validate_data
-                batch_size: 1
-                num_workers: 16
-                collect_fn:
-                    class: ICDARCollectFN
         visualize: false
-        interval: 4500
+        interval: 20000    # validate at higher frequency than 4500 if you want quicker feedback
         exempt: 1
+        data_loaders:
+            icdar2015_clean:
+                class: DataLoader
+                dataset: ^validate_data_clean
+                batch_size: 1
+                num_workers: 8
+                collect_fn: { class: ICDARCollectFN }
 
+            icdar2015_blur_mild:
+                class: DataLoader
+                dataset: ^validate_data_blur_mild
+                batch_size: 1
+                num_workers: 8
+                collect_fn: { class: ICDARCollectFN }
+
+            icdar2015_blur_med:
+                class: DataLoader
+                dataset: ^validate_data_blur_med
+                batch_size: 1
+                num_workers: 8
+                collect_fn: { class: ICDARCollectFN }
+
+            icdar2015_blur_heavy:
+                class: DataLoader
+                dataset: ^validate_data_blur_heavy
+                batch_size: 1
+                num_workers: 8
+                collect_fn: { class: ICDARCollectFN }
     logger:
         class: Logger
         verbose: true

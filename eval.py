@@ -5,6 +5,8 @@ import torch
 import yaml
 from tqdm import tqdm
 import numpy as np
+import cv2
+
 from trainer import Trainer
 # tagged yaml objects
 from experiment import Structure, TrainSettings, ValidationSettings, Experiment
@@ -133,31 +135,72 @@ class Eval:
         
         return time_cost
         
-    def format_output(self, batch, output):
+    def format_output(self, batch, output, img_root='.'):
         batch_boxes, batch_scores = output
+        os.makedirs('predictions', exist_ok=True)  # ✨ Create output folder for images
+
         for index in range(batch['image'].size(0)):
             original_shape = batch['shape'][index]
             filename = batch['filename'][index]
             result_file_name = 'res_' + filename.split('/')[-1].split('.')[0] + '.txt'
             result_file_path = os.path.join(self.args['result_dir'], result_file_name)
+
             boxes = batch_boxes[index]
             scores = batch_scores[index]
+
+            # ✨ Load original image (assumes filename is a valid image path)
+            # ✨ Construct full path to the image
+            img_path = os.path.join(img_root, filename)
+            image_bgr = cv2.imread(img_path)
+            if image_bgr is None:
+                print(f"[WARNING] Could not load image: {img_path}")
+                continue
+
             if self.args['polygon']:
                 with open(result_file_path, 'wt') as res:
                     for i, box in enumerate(boxes):
-                        box = np.array(box).reshape(-1).tolist()
-                        result = ",".join([str(int(x)) for x in box])
+                        box = np.array(box).reshape(-1).astype(int)
+                        result = ",".join([str(x) for x in box.flatten()])
                         score = scores[i]
                         res.write(result + ',' + str(score) + "\n")
+                        
+                        # ✨ Draw polygons
+                        cv2.polylines(image_bgr, [box.reshape(-1, 1, 2)], isClosed=True, color=(0, 255, 0), thickness=2)
             else:
                 with open(result_file_path, 'wt') as res:
                     for i in range(boxes.shape[0]):
                         score = scores[i]
                         if score < self.args['box_thresh']:
                             continue
-                        box = boxes[i,:,:].reshape(-1).tolist()
-                        result = ",".join([str(int(x)) for x in box])
+                        box = boxes[i, :, :].reshape(-1).astype(int)
+                        result = ",".join([str(x) for x in box])
                         res.write(result + ',' + str(score) + "\n")
+
+                        # ✨ Draw rectangles as polygons
+                        cv2.polylines(image_bgr, [box.reshape(-1, 1, 2)], isClosed=True, color=(0, 255, 0), thickness=2)
+
+            # ✨ Save output image with bounding boxes
+            out_img_name = os.path.splitext(os.path.basename(filename))[0] + '_pred.jpg'
+            out_img_path = os.path.join('predictions', out_img_name)
+            cv2.imwrite(out_img_path, image_bgr)
+            # print(f"[INFO] Saved prediction image to {out_img_path}")
+
+            # ✨ Also save ground truth boxes
+            os.makedirs('ground_truth', exist_ok=True)
+            image_gt = cv2.imread(img_path)
+            if image_gt is not None:
+                if 'polygons' in batch:
+                    gt_polygons = batch['polygons'][index]
+                    for gt_box in gt_polygons:
+                        gt_box = np.array(gt_box).reshape(-1, 1, 2).astype(int)
+                        cv2.polylines(image_gt, [gt_box], isClosed=True, color=(0, 0, 255), thickness=2)  # red
+                gt_img_name = os.path.splitext(os.path.basename(filename))[0] + '_gt.jpg'
+                gt_img_path = os.path.join('ground_truth', gt_img_name)
+                cv2.imwrite(gt_img_path, image_gt)
+                # print(f"[INFO] Saved ground truth image to {gt_img_path}")
+            else:
+                print(f"[WARNING] Could not load image for ground truth: {img_path}")
+
         
     def eval(self, visualize=False):
         self.init_torch_tensor()
@@ -177,7 +220,13 @@ class Eval:
                     output = self.structure.representer.represent(batch, pred, is_output_polygon=self.args['polygon']) 
                     if not os.path.isdir(self.args['result_dir']):
                         os.mkdir(self.args['result_dir'])
-                    self.format_output(batch, output)
+
+
+                    # self.format_output(batch, output)
+                    img_root = os.path.join('datasets\icdar2015', 'test_images')  # fallback if not found
+                    self.format_output(batch, output, img_root)
+
+
                     raw_metric = self.structure.measurer.validate_measure(batch, output, is_output_polygon=self.args['polygon'], box_thresh=self.args['box_thresh'])
                     raw_metrics.append(raw_metric)
 

@@ -101,9 +101,29 @@ class MakeBorderMap(Configurable):
             (2 * np.sqrt(square_distance_1 * square_distance_2))
         square_sin = 1 - np.square(cosin)
         square_sin = np.nan_to_num(square_sin)
-        result = np.sqrt(square_distance_1 * square_distance_2 *
-                         square_sin / square_distance)
+        # result = np.sqrt(square_distance_1 * square_distance_2 *
+        #                  square_sin / square_distance)
 
+        eps = 1e-12
+
+        # Clamp intermediates to valid ranges
+        square_distance_1 = np.maximum(square_distance_1, 0.0)
+        square_distance_2 = np.maximum(square_distance_2, 0.0)
+        square_sin       = np.clip(square_sin, 0.0, 1.0)      # sin^2 should be in [0,1]
+        den              = np.maximum(square_distance, eps)    # avoid /0
+
+        # Compose the expression
+        expr = (square_distance_1 * square_distance_2 * square_sin) / den
+
+        # Compute sqrt safely; suppress warnings inside this block
+        with np.errstate(invalid='ignore', divide='ignore'):
+            expr = np.maximum(expr, 0.0)
+            result = np.sqrt(expr, dtype=np.float32)
+
+        # Final sanitation to be extra safe
+        result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32, copy=False)
+
+        #####################
         result[cosin < 0] = np.sqrt(np.fmin(
             square_distance_1, square_distance_2))[cosin < 0]
         # self.extend_line(point_1, point_2, result)

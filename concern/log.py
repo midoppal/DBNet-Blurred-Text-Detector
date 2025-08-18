@@ -31,8 +31,17 @@ class Logger(Configurable):
 
         self._make_storage()
 
+        # cmd = kwargs['cmd']
+        # self.name = cmd['name']
+
+
         cmd = kwargs['cmd']
-        self.name = cmd['name']
+        raw_name = cmd['name']
+        # If name comes from something like 'SegDetectorModel-seg_detector/whatever.yaml', clean it up
+        clean_name = os.path.splitext(os.path.basename(raw_name))[0]
+        self.name = f"{cmd['name'].split('-')[0]}-{clean_name}"
+
+
         self.log_dir = os.path.join(self.log_dir, self.name)
         try:
             self.verbose = cmd['verbose']
@@ -63,8 +72,10 @@ class Logger(Configurable):
             self.database_dir, self.log_dir, application)
         if not os.path.exists(storage_dir):
             os.makedirs(storage_dir)
+        # if not os.path.exists(self.log_dir):
+        #     os.symlink(storage_dir, self.log_dir)
         if not os.path.exists(self.log_dir):
-            os.symlink(storage_dir, self.log_dir)
+            os.makedirs(self.log_dir, exist_ok=True)
 
     def save_dir(self, dir_name):
         return os.path.join(self.log_dir, dir_name)

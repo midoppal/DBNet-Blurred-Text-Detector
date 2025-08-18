@@ -283,32 +283,77 @@ def resnet34(pretrained=True, **kwargs):
     return model
 
 
+# def resnet50(pretrained=True, **kwargs):
+#     """Constructs a ResNet-50 model.
+#     Args:
+#         pretrained (bool): If True, returns a model pre-trained on ImageNet
+#     """
+#     model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
+#     if pretrained:
+#         model.load_state_dict(model_zoo.load_url(
+#             model_urls['resnet50']), strict=False)
+#     return model
+import torch
 def resnet50(pretrained=True, **kwargs):
     """Constructs a ResNet-50 model.
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
     model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
+    # if pretrained:
+    #     model.load_state_dict(
+    #         model_zoo.load_url(
+    #             model_urls['resnet50'],
+    #             map_location=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    #         ),
+    #         strict=False
+    #     )
     if pretrained:
-        model.load_state_dict(model_zoo.load_url(
-            model_urls['resnet50']), strict=False)
+        state_dict = model_zoo.load_url(
+            model_urls['resnet50'],
+            map_location='cpu'   # <-- always CPU here
+        )
+        model.load_state_dict(state_dict, strict=False)
     return model
 
-
+# For eval
+# def deformable_resnet50(pretrained=True, **kwargs):
+#     """Constructs a ResNet-50 model with deformable conv.
+#     Args:
+#         pretrained (bool): If True, returns a model pre-trained on ImageNet
+#     """
+#     model = ResNet(Bottleneck, [3, 4, 6, 3],
+#                    dcn=dict(modulated=True,
+#                             deformable_groups=1,
+#                             fallback_on_stride=False),
+#                    stage_with_dcn=[False, True, True, True],
+#                    **kwargs)
+#     if pretrained:
+#     #     model.load_state_dict(model_zoo.load_url(
+#     #         model_urls['resnet50']), strict=False)
+#         model.load_state_dict(
+#             model_zoo.load_url(
+#                 model_urls['resnet50'],
+#                 map_location=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+#             ),
+#             strict=False
+#         )
+#     return model
+# For training
 def deformable_resnet50(pretrained=True, **kwargs):
-    """Constructs a ResNet-50 model with deformable conv.
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-    """
-    model = ResNet(Bottleneck, [3, 4, 6, 3],
-                   dcn=dict(modulated=True,
-                            deformable_groups=1,
-                            fallback_on_stride=False),
-                   stage_with_dcn=[False, True, True, True],
-                   **kwargs)
+    model = ResNet(
+        Bottleneck, [3, 4, 6, 3],
+        dcn=dict(modulated=True, deformable_groups=1, fallback_on_stride=False),
+        stage_with_dcn=[False, True, True, True],
+        **kwargs
+    )
+    print("before load: model device =", next(model.parameters()).device)
     if pretrained:
-        model.load_state_dict(model_zoo.load_url(
-            model_urls['resnet50']), strict=False)
+        state_dict = model_zoo.load_url(
+            model_urls['resnet50'],
+            map_location='cpu'   # <-- always CPU here
+        )
+        model.load_state_dict(state_dict, strict=False)
     return model
 
 

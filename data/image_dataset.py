@@ -2,6 +2,7 @@ import functools
 import logging
 import bisect
 
+import os
 import torch.utils.data as data
 import cv2
 import numpy as np
@@ -32,27 +33,69 @@ class ImageDataset(data.Dataset, Configurable):
         self.gt_paths = []
         self.get_all_samples()
 
+    # def get_all_samples(self):
+    #     for i in range(len(self.data_dir)):
+    #         with open(self.data_list[i], 'r') as fid:
+    #             image_list = fid.readlines()
+    #         if self.is_training:
+    #             image_path=[self.data_dir[i]+'/train_images/'+timg.strip() for timg in image_list]
+    #             gt_path=[self.data_dir[i]+'/train_gts/'+timg.strip()+'.txt' for timg in image_list]
+    #         else:
+    #             image_path=[self.data_dir[i]+'/test_images/'+timg.strip() for timg in image_list]
+    #             print(self.data_dir[i])
+    #             if 'TD500' in self.data_list[i] or 'total_text' in self.data_list[i]:
+    #                 gt_path=[self.data_dir[i]+'/test_gts/'+timg.strip()+'.txt' for timg in image_list]
+    #             else:
+    #                 gt_path=[self.data_dir[i]+'/test_gts/'+'gt_'+timg.strip().split('.')[0]+'.txt' for timg in image_list]
+    #         self.image_paths += image_path
+    #         self.gt_paths += gt_path
+    #     self.num_samples = len(self.image_paths)
+    #     self.targets = self.load_ann()
+    #     if self.is_training:
+    #         assert len(self.image_paths) == len(self.targets)
     def get_all_samples(self):
+        self.image_paths = []
+        self.gt_paths = []
+
         for i in range(len(self.data_dir)):
-            with open(self.data_list[i], 'r') as fid:
-                image_list = fid.readlines()
-            if self.is_training:
-                image_path=[self.data_dir[i]+'/train_images/'+timg.strip() for timg in image_list]
-                gt_path=[self.data_dir[i]+'/train_gts/'+timg.strip()+'.txt' for timg in image_list]
-            else:
-                image_path=[self.data_dir[i]+'/test_images/'+timg.strip() for timg in image_list]
-                print(self.data_dir[i])
-                if 'TD500' in self.data_list[i] or 'total_text' in self.data_list[i]:
-                    gt_path=[self.data_dir[i]+'/test_gts/'+timg.strip()+'.txt' for timg in image_list]
+            with open(self.data_list[i], 'r', encoding='utf-8') as fid:
+                image_list = [ln.strip() for ln in fid if ln.strip()]
+
+            is_td_or_tt = ('TD500' in self.data_list[i]) or ('total_text' in self.data_list[i])
+
+            for rel in image_list:
+                # -------- image path (flexible) --------
+                # If the list already includes a folder (e.g., "test_images/..." or "blurred_.../..."),
+                # treat it as relative to data_dir; otherwise prepend train_images/test_images.
+                has_folder = ('/' in rel) or ('\\' in rel)
+                subdir = 'train_images' if self.is_training else 'test_images'
+                if has_folder:
+                    img_path = os.path.join(self.data_dir[i], rel)
                 else:
-                    gt_path=[self.data_dir[i]+'/test_gts/'+'gt_'+timg.strip().split('.')[0]+'.txt' for timg in image_list]
-            self.image_paths += image_path
-            self.gt_paths += gt_path
+                    img_path = os.path.join(self.data_dir[i], subdir, rel)
+
+                # -------- GT path (always use basename) --------
+                base = os.path.basename(rel)                       # e.g., "img_1.jpg"
+                stem = os.path.splitext(base)[0]                   # e.g., "img_1"
+
+                if self.is_training:
+                    # your original code used "train_gts/<name>.txt" for training
+                    gt_path = os.path.join(self.data_dir[i], 'train_gts', f'{stem}.jpg.txt')
+                else:
+                    if is_td_or_tt:
+                        # TD500 / Total-Text typically don't use "gt_" prefix
+                        gt_path = os.path.join(self.data_dir[i], 'test_gts', f'{stem}.txt')
+                    else:
+                        # ICDAR15 uses "gt_<name>.txt"
+                        gt_path = os.path.join(self.data_dir[i], 'test_gts', f'gt_{stem}.txt')
+
+                self.image_paths.append(img_path)
+                self.gt_paths.append(gt_path)
+
         self.num_samples = len(self.image_paths)
         self.targets = self.load_ann()
         if self.is_training:
             assert len(self.image_paths) == len(self.targets)
-
     def load_ann(self):
         res = []
         for gt in self.gt_paths:

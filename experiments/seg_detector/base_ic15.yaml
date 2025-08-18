@@ -23,23 +23,94 @@ define:
         - class: MakeICDARData
         - class: MakeSegDetectionData
         - class: MakeBorderMap
+        - class: RandomMotionBlur
+          args:
+            p_clean: 0.30
+            p_mild: 0.40
+            p_med:  0.20
+            p_heavy: 0.10
+            mild:  [1, 7]
+            med:   [8, 14]
+            heavy: [15, 21]
+            profile: "gaussian"        # or "gaussian"/"cosine"
+            gamma_aware: true
+            antialias: true
         - class: NormalizeImage
         - class: FilterKeys
           superfluous: ['polygons', 'filename', 'shape', 'ignore_tags', 'is_training']
 
-  - name: validate_data
+  # - name: validate_data
+  #   class: ImageDataset
+  #   data_dir:
+  #       - './datasets/icdar2015/'
+  #   data_list:
+  #       - './datasets/icdar2015/test_list.txt'
+  #   processes:
+  #       - class: AugmentDetectionData
+  #         augmenter_args:
+  #             - ['Resize', {'width': 1280, 'height': 736}]
+  #             # - ['Resize', {'width': 2048, 'height': 1152}]
+  #         only_resize: True
+  #         keep_ratio: False
+  #       - class: MakeICDARData
+  #       - class: MakeSegDetectionData
+  #       - class: NormalizeImage
+
+  - name: validate_data_clean
     class: ImageDataset
-    data_dir:
-        - './datasets/icdar2015/'
-    data_list:
-        - './datasets/icdar2015/test_list.txt'
+    data_dir: ['./datasets/icdar2015']
+    data_list: ['./datasets/icdar2015/test_list_clean.txt']
     processes:
-        - class: AugmentDetectionData
-          augmenter_args:
-              - ['Resize', {'width': 1280, 'height': 736}]
-              # - ['Resize', {'width': 2048, 'height': 1152}]
-          only_resize: True
-          keep_ratio: False
-        - class: MakeICDARData
-        - class: MakeSegDetectionData
-        - class: NormalizeImage
+      - class: AugmentDetectionData
+        augmenter_args:
+          - ['Resize', {'width': 1280, 'height': 736}]
+        only_resize: True
+        keep_ratio: False
+      - class: MakeICDARData
+      - class: MakeSegDetectionData
+      - class: NormalizeImage
+
+  # Mild blur (example: length_5_jitter_5)
+  - name: validate_data_blur_mild
+    class: ImageDataset
+    data_dir: ['./datasets/icdar2015']
+    data_list: ['./datasets/icdar2015/test_list_L5J5.txt']
+    processes:
+      - class: AugmentDetectionData
+        augmenter_args:
+          - ['Resize', {'width': 1280, 'height': 736}]
+        only_resize: True
+        keep_ratio: False
+      - class: MakeICDARData
+      - class: MakeSegDetectionData
+      - class: NormalizeImage
+
+  # Medium blur (example: length_9_jitter_3)
+  - name: validate_data_blur_med
+    class: ImageDataset
+    data_dir: ['./datasets/icdar2015']
+    data_list: ['./datasets/icdar2015/test_list_L9J3.txt']
+    processes:
+      - class: AugmentDetectionData
+        augmenter_args:
+          - ['Resize', {'width': 1280, 'height': 736}]
+        only_resize: True
+        keep_ratio: False
+      - class: MakeICDARData
+      - class: MakeSegDetectionData
+      - class: NormalizeImage
+
+  # Heavy blur (example: length_15_jitter_3)
+  - name: validate_data_blur_heavy
+    class: ImageDataset
+    data_dir: ['./datasets/icdar2015']
+    data_list: ['./datasets/icdar2015/test_list_L15J3.txt']
+    processes:
+      - class: AugmentDetectionData
+        augmenter_args:
+          - ['Resize', {'width': 1280, 'height': 736}]
+        only_resize: True
+        keep_ratio: False
+      - class: MakeICDARData
+      - class: MakeSegDetectionData
+      - class: NormalizeImage

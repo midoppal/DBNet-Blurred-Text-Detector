@@ -256,7 +256,8 @@ void deformable_im2col(
   int channel_per_deformable_group = channels / deformable_group;
 
   AT_DISPATCH_FLOATING_TYPES_AND_HALF(
-      data_im.type(), "deformable_im2col_gpu", ([&] {
+      data_im.scalar_type(), "deformable_im2col_gpu", ([&] {
+      // data_im.type(), "deformable_im2col_gpu", ([&] {
         const scalar_t *data_im_ = data_im.data<scalar_t>();
         const scalar_t *data_offset_ = data_offset.data<scalar_t>();
         scalar_t *data_col_ = data_col.data<scalar_t>();
@@ -350,7 +351,8 @@ void deformable_col2im(
   int channel_per_deformable_group = channels / deformable_group;
 
   AT_DISPATCH_FLOATING_TYPES_AND_HALF(
-      data_col.type(), "deformable_col2im_gpu", ([&] {
+      data_col.scalar_type(), "deformable_col2im_gpu", ([&] {
+      // data_col.type(), "deformable_col2im_gpu", ([&] {
         const scalar_t *data_col_ = data_col.data<scalar_t>();
         const scalar_t *data_offset_ = data_offset.data<scalar_t>();
         scalar_t *grad_im_ = grad_im.data<scalar_t>();
@@ -448,7 +450,8 @@ void deformable_col2im_coord(
   int channel_per_deformable_group = channels * ksize_h * ksize_w / deformable_group;
 
   AT_DISPATCH_FLOATING_TYPES_AND_HALF(
-      data_col.type(), "deformable_col2im_coord_gpu", ([&] {
+      data_col.scalar_type(), "deformable_col2im_coord_gpu", ([&] {
+      // data_col.type(), "deformable_col2im_coord_gpu", ([&] {
         const scalar_t *data_col_ = data_col.data<scalar_t>();
         const scalar_t *data_im_ = data_im.data<scalar_t>();
         const scalar_t *data_offset_ = data_offset.data<scalar_t>();
@@ -778,7 +781,8 @@ void modulated_deformable_im2col_cuda(
   const int num_kernels = channels * batch_size * height_col * width_col;
 
   AT_DISPATCH_FLOATING_TYPES_AND_HALF(
-      data_im.type(), "modulated_deformable_im2col_gpu", ([&] {
+      data_im.scalar_type(), "modulated_deformable_im2col_gpu", ([&] {
+      // data_im.type(), "modulated_deformable_im2col_gpu", ([&] {
         const scalar_t *data_im_ = data_im.data<scalar_t>();
         const scalar_t *data_offset_ = data_offset.data<scalar_t>();
         const scalar_t *data_mask_ = data_mask.data<scalar_t>();
@@ -810,7 +814,8 @@ void modulated_deformable_col2im_cuda(
   const int num_kernels = channels * kernel_h * kernel_w * batch_size * height_col * width_col;
 
   AT_DISPATCH_FLOATING_TYPES_AND_HALF(
-      data_col.type(), "modulated_deformable_col2im_gpu", ([&] {
+      data_col.scalar_type(), "modulated_deformable_col2im_gpu", ([&] {
+      // data_col.type(), "modulated_deformable_col2im_gpu", ([&] {
         const scalar_t *data_col_ = data_col.data<scalar_t>();
         const scalar_t *data_offset_ = data_offset.data<scalar_t>();
         const scalar_t *data_mask_ = data_mask.data<scalar_t>();
@@ -843,7 +848,8 @@ void modulated_deformable_col2im_coord_cuda(
   const int channel_per_deformable_group = channels * kernel_h * kernel_w / deformable_group;
 
   AT_DISPATCH_FLOATING_TYPES_AND_HALF(
-      data_col.type(), "modulated_deformable_col2im_coord_gpu", ([&] {
+      data_col.scalar_type(), "modulated_deformable_col2im_coord_gpu", ([&] {
+      // data_col.type(), "modulated_deformable_col2im_coord_gpu", ([&] {
         const scalar_t *data_col_ = data_col.data<scalar_t>();
         const scalar_t *data_im_ = data_im.data<scalar_t>();
         const scalar_t *data_offset_ = data_offset.data<scalar_t>();
