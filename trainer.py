@@ -113,51 +113,106 @@ def _dump_validation_metrics(all_metrics, epoch, step, run_root, logger=None):
 # ======================== [BEGIN} Freeze & LR-mult helpers ========================
 import torch.nn as nn
 
+# How long to keep early stages frozen
+FREEZE_BACKBONE_EPOCHS = int(os.environ.get("FREEZE_BACKBONE_EPOCHS", "10"))
 
-FREEZE_BACKBONE_EPOCHS = int(os.environ.get("FREEZE_BACKBONE_EPOCHS", "0"))
+# Which backbone stages to freeze (comma-separated). Default matches torchvision ResNet.
+# Examples: "conv1,bn1,layer1,layer2"  or  "stem,stage1,stage2"  (depending on your backbone)
+FREEZE_STAGES = [
+    s.strip() for s in os.environ.get("FREEZE_STAGES", "conv1,bn1,layer1,layer2").split(",")
+    if s.strip()
+]
 
-
+# Optional LR multiplier for the *entire* backbone param group (you already support this)
 BACKBONE_LR_MULT = float(os.environ.get("BACKBONE_LR_MULT", "1"))
+
+def _get_model_root(module):
+    """unwrap DataParallel/DistributedDataParallel and common wrappers"""
+    return module.module if hasattr(module, "module") else module
 
 def _get_backbone(module):
     """
-    Try to retrieve the backbone submodule from different wrapper layouts.
-    Works with:
-      - model.backbone
-      - model.model.backbone   (if your 'Model' wraps BasicModel)
-    Returns the module or None if not found.
+    Retrieve the backbone submodule from different wrapper layouts.
+    Tries a few common names, then falls back to a heuristic scan.
     """
-    if hasattr(module, "backbone"):
-        return module.backbone
-    if hasattr(module, "model") and hasattr(module.model, "backbone"):
-        return module.model.backbone
+    m = _get_model_root(module)
+
+    # direct/common attributes
+    for name in ("backbone", "body", "encoder", "feature_extractor", "resnet"):
+        if hasattr(m, name):
+            return getattr(m, name)
+
+    # nested: model.backbone
+    if hasattr(m, "model"):
+        mm = _get_model_root(m.model)
+        for name in ("backbone", "body", "encoder", "feature_extractor", "resnet"):
+            if hasattr(mm, name):
+                return getattr(mm, name)
+
+    # heuristic: child name match
+    for name, child in m.named_children():
+        if name in ("backbone", "body", "encoder", "feature_extractor", "resnet"):
+            return child
     return None
 
-def set_backbone_frozen(model, frozen: bool, freeze_bn: bool = True, logger=None):
+def _toggle_requires_grad(module, trainable: bool):
+    for p in module.parameters():
+        p.requires_grad = trainable
+
+def set_backbone_stages_trainable(model, stages, trainable: bool, freeze_bn: bool = True, logger=None):
     """
-    Toggle requires_grad for all backbone params and optionally freeze BN running stats.
+    Freeze/unfreeze ONLY the requested 'stages' inside the backbone.
+    On torchvision ResNet, valid stage names: conv1, bn1, layer1, layer2, layer3, layer4.
     """
     bb = _get_backbone(model)
     if bb is None:
         if logger: logger.info("[freeze] backbone not found; skipping")
         return
-    for p in bb.parameters():
-        p.requires_grad = not frozen
 
+    # map stage names to actual submodules (top-level children cover ResNet nicely)
+    name_to_child = dict(bb.named_children())
+
+    changed = []
+    for name in stages:
+        if name in name_to_child:
+            _toggle_requires_grad(name_to_child[name], trainable)
+            changed.append(name)
+
+    # Special-case: if conv1 mentioned and bb has a paired bn1 not already covered
+    if ("conv1" in stages) and hasattr(bb, "bn1"):
+        _toggle_requires_grad(bb.bn1, trainable)
+        if "bn1" not in changed:
+            changed.append("bn1")
+
+    # Optionally freeze BN running stats inside the affected stages
     if freeze_bn:
-        if frozen:
-            def _bn_eval(m):
-                if isinstance(m, nn.modules.batchnorm._BatchNorm):
-                    m.eval()
-            bb.apply(_bn_eval)
-        else:
-            bb.train()  # overall model.train() is still called outside
+        def _maybe_set_bn_mode(mod, stage_trainable):
+            if isinstance(mod, nn.modules.batchnorm._BatchNorm):
+                # eval() to stop updating running stats when frozen, train() when unfrozen
+                mod.eval() if not stage_trainable else mod.train()
+
+        for name in changed:
+            tgt = getattr(bb, name, None)
+            if tgt is None:
+                continue
+            tgt.apply(lambda m: _maybe_set_bn_mode(m, trainable))
 
     if logger:
-        state = "FROZEN" if frozen else "UNFROZEN"
-        nparams = sum(p.numel() for p in bb.parameters())
-        ntrain  = sum(p.numel() for p in bb.parameters() if p.requires_grad)
-        logger.info(f"[freeze] backbone {state}: trainable={ntrain}/{nparams}")
+        state = "UNFROZEN" if trainable else "FROZEN"
+        # Count only affected params
+        def _count_params(mod):
+            total = sum(p.numel() for p in mod.parameters())
+            train = sum(p.numel() for p in mod.parameters() if p.requires_grad)
+            return train, total
+
+        msg_bits = []
+        for name in changed:
+            mod = getattr(bb, name, None)
+            if mod is not None:
+                tr, tot = _count_params(mod)
+                msg_bits.append(f"{name}({tr}/{tot})")
+        msg = ", ".join(msg_bits) if msg_bits else "none"
+        logger.info(f"[freeze] stages {state}: {msg}")
 # ========================= [END] Freeze & LR-mult helpers =========================
 
 
@@ -169,6 +224,7 @@ class Trainer:
         self.structure = experiment.structure
         self.logger = experiment.logger
         self.model_saver = experiment.train.model_saver
+        self._stages_frozen = False
 
         # FIXME: Hack the save model path into logger path
         self.model_saver.dir_path = self.logger.save_dir(
@@ -210,6 +266,7 @@ class Trainer:
         self.logger.args(self.experiment)
         self.logger.info(f"[paths] run_dir={self.logger.log_dir}  model_dir={self.model_saver.dir_path}")
         model = self.init_model()
+        # print(list(_get_backbone(model).named_children()))
         train_data_loader = self.experiment.train.data_loader
         if self.experiment.validation:
             validation_loaders = self.experiment.validation.data_loaders
@@ -262,18 +319,29 @@ class Trainer:
         self.logger.report_time('Init')
 
         # ======================== [BEGIN] Initial backbone freeze window ========================
-        if FREEZE_BACKBONE_EPOCHS > 0:
-            set_backbone_frozen(model, frozen=True, freeze_bn=True, logger=self.logger)
-            self.logger.info(f"[freeze] backbone will unfreeze at epoch {FREEZE_BACKBONE_EPOCHS}")
-        else:
-            self.logger.info("[freeze] disabled (FREEZE_BACKBONE_EPOCHS=0)")
+        # ---- Per-epoch stage-freeze scheduler ----
+        def _maybe_stage_freeze(epoch_now):
+            if FREEZE_BACKBONE_EPOCHS <= 0 or not FREEZE_STAGES:
+                return
+            # Freeze early epochs
+            if epoch_now < FREEZE_BACKBONE_EPOCHS and not self._stages_frozen:
+                set_backbone_stages_trainable(model, FREEZE_STAGES, trainable=False, freeze_bn=True, logger=self.logger)
+                self._stages_frozen = True
+                self.logger.info(f"[freeze] freezing stages {FREEZE_STAGES} for epochs [0..{FREEZE_BACKBONE_EPOCHS-1}]")
+            # Unfreeze at boundary
+            elif epoch_now >= FREEZE_BACKBONE_EPOCHS and self._stages_frozen:
+                set_backbone_stages_trainable(model, FREEZE_STAGES, trainable=True, freeze_bn=True, logger=self.logger)
+                self._stages_frozen = False
+                self.logger.info(f"[freeze] unfroze stages at epoch {epoch_now}")
+
+        # Call once for epoch 0 (right after model is built/restored)
+        _maybe_stage_freeze(epoch)
         # ========================= [END] Initial backbone freeze window =========================
 
         model.train()
         while True:
             # ======================== [BEGIN] Unfreeze when we reach the target epoch ========================
-            if FREEZE_BACKBONE_EPOCHS > 0 and epoch == FREEZE_BACKBONE_EPOCHS:
-                set_backbone_frozen(model, frozen=False, freeze_bn=True, logger=self.logger)
+            _maybe_stage_freeze(epoch)
             # ========================= [END] Unfreeze when we reach the target epoch =========================
 
             self.logger.info('Training epoch ' + str(epoch))

@@ -11,17 +11,18 @@ class SegDetectorRepresenter(Configurable):
     dest = State(default='binary')
 
     def __init__(self, cmd={}, **kwargs):
-        self.load_all(**kwargs)
+        self.load_all(**kwargs)         # loads State fields if kwargs provided
         self.min_size = 3
         self.scale_ratio = 0.4
-        if 'debug' in cmd:
-            self.debug = cmd['debug']
-        if 'thresh' in cmd:
-            self.thresh = cmd['thresh']
-        if 'box_thresh' in cmd:
-            self.box_thresh = cmd['box_thresh']
-        if 'dest' in cmd:
-            self.dest = cmd['dest']
+
+        # allow CLI/YAML 'cmd' overrides
+        self.thresh      = cmd.get('thresh', self.thresh)
+        self.box_thresh  = cmd.get('box_thresh', self.box_thresh)
+        self.dest        = cmd.get('dest', self.dest)
+        self.max_candidates = cmd.get('max_candidates', self.max_candidates)
+        self.min_size    = cmd.get('min_size', self.min_size)
+
+        # print(self.max_candidates)
 
     def represent(self, batch, _pred, is_output_polygon=False):
         '''
@@ -71,6 +72,8 @@ class SegDetectorRepresenter(Configurable):
         assert _bitmap.size(0) == 1
         bitmap = _bitmap.cpu().numpy()[0]  # The first channel
         pred = pred.cpu().detach().numpy()[0]
+        # print("pred stats:", float(pred.min()), float(pred.max()), float(pred.mean()))
+        # print("bitmap > thresh positives:", int((bitmap > 0).sum()))
         height, width = bitmap.shape
         boxes = []
         scores = []
@@ -122,30 +125,45 @@ class SegDetectorRepresenter(Configurable):
         '''
         
         assert _bitmap.size(0) == 1
+        # print(f"[repr] thresh={self.thresh} box_thresh={self.box_thresh} min_size={self.min_size} dest={self.dest}")
         bitmap = _bitmap.cpu().numpy()[0]  # The first channel
         pred = pred.cpu().detach().numpy()[0]
+        # print("pred stats:", float(pred.min()), float(pred.max()), float(pred.mean()))
+        # print("bitmap > thresh positives:", int((bitmap > 0).sum()))
         height, width = bitmap.shape
         contours, _ = cv2.findContours(
             (bitmap*255).astype(np.uint8),
             cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        
         num_contours = min(len(contours), self.max_candidates)
         boxes = np.zeros((num_contours, 4, 2), dtype=np.int16)
         scores = np.zeros((num_contours,), dtype=np.float32)
+        # print("num contours:", len(contours))
+        kept_size = 0
+        kept_score = 0
+        kept_unclip = 0
+        max_score_seen = 0.0
 
         for index in range(num_contours):
             contour = contours[index]
             points, sside = self.get_mini_boxes(contour)
             if sside < self.min_size:
                 continue
+            kept_size += 1
             points = np.array(points)
             score = self.box_score_fast(pred, points.reshape(-1, 2))
+            max_score_seen = max(max_score_seen, float(score))
             if self.box_thresh > score:
                 continue
-        
-            box = self.unclip(points).reshape(-1, 1, 2)
+            kept_score += 1
+
+            # TEMP: make unclip ratio explicit
+            box = self.unclip(points, unclip_ratio=2.0).reshape(-1, 1, 2)
             box, sside = self.get_mini_boxes(box)
             if sside < self.min_size + 2:
                 continue
+            kept_unclip += 1
+
             box = np.array(box)
             if not isinstance(dest_width, int):
                 dest_width = dest_width.item()
@@ -157,6 +175,8 @@ class SegDetectorRepresenter(Configurable):
                 np.round(box[:, 1] / height * dest_height), 0, dest_height)
             boxes[index, :, :] = box.astype(np.int16)
             scores[index] = score
+
+        # print(f"kept after size: {kept_size}, after score: {kept_score}, after unclip: {kept_unclip}, max_score_seen: {max_score_seen:.4f}")
         return boxes, scores
 
     def unclip(self, box, unclip_ratio=1.5):

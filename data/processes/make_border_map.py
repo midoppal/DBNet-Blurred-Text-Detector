@@ -106,8 +106,19 @@ class MakeBorderMap(DataProcess):
         square_distance = np.square(
             point_1[0] - point_2[0]) + np.square(point_1[1] - point_2[1])
 
-        cosin = (square_distance - square_distance_1 - square_distance_2) / \
-            (2 * np.sqrt(square_distance_1 * square_distance_2))
+        # cosin = (square_distance - square_distance_1 - square_distance_2) / \
+        #     (2 * np.sqrt(square_distance_1 * square_distance_2))
+        den = 2.0 * np.sqrt(square_distance_1 * square_distance_2)
+        # safe divide: where den==0, set cosin to 1.0 (zero angle), which is benign
+        cosin = np.divide(
+            (square_distance - square_distance_1 - square_distance_2),
+            den,
+            out=np.ones_like(den, dtype=np.float32),
+            where=den > 0
+        )
+        cosin = np.clip(cosin, -1.0, 1.0)  # keep in valid arccos range
+
+        
         square_sin = 1 - np.square(cosin)
         square_sin = np.nan_to_num(square_sin)
         # result = np.sqrt(square_distance_1 * square_distance_2 *

@@ -1,13 +1,11 @@
 
-# data/processes/random_motion_blur.py
-# One-sided horizontal motion blur (50/50 left or right) with Gaussian default.
-# Compatible with DB's data pipeline. Returns float32 image in [0,255] like other processes.
+
 
 import math
 import numpy as np
 import cv2
 
-# ---------- color transforms (gamma-aware) ----------
+
 def _srgb_to_linear(img):
     img = img.astype(np.float32, copy=False)
     img = np.nan_to_num(img, nan=0.0, posinf=1.0, neginf=0.0)
@@ -56,12 +54,14 @@ def _one_sided_horizontal_kernel(length: int, smear_dir: str, profile: str = "ga
     w = _profile_weights(L + 1, profile)  # positions: 0,1,2,...,L
 
     if smear_dir == "right":
-        for i, wi in enumerate(w):           # i=0 at center; i=L far right
+        for i, wi in enumerate(w):           
             x = c + i
             if 0 <= x < k:
                 kernel[c, x] += wi
+
+
     elif smear_dir == "left":
-        for i, wi in enumerate(w):           # i=0 at center; i=L far left
+        for i, wi in enumerate(w):          
             x = c - i
             if 0 <= x < k:
                 kernel[c, x] += wi
@@ -110,14 +110,15 @@ def _apply_motion_blur(img_bgr: np.ndarray, kernel: np.ndarray, gamma_aware: boo
 
 class RandomMotionBlur:
     def __init__(self,
-                 p_clean=0.30, p_mild=0.40, p_med=0.20, p_heavy=0.10,
-                 mild=(1,7), med=(8,14), heavy=(15,21),
+                 p_clean=0, p_mild=0, p_med=0, p_heavy=1,
+                 mild=(1,10), med=(1,15), heavy=(16,30),
                  profile="gaussian", gamma_aware=True, antialias=True, seed=None,
                  **kwargs):
         # Tolerate extra framework-specific keys
         kwargs.pop('class', None)
         kwargs.pop('type', None)
-
+        # print("INIT VALUES:", p_clean, p_mild, p_med, p_heavy)
+        # print("KWARGS:", kwargs)
         ps = np.array([p_clean, p_mild, p_med, p_heavy], np.float32)
         self.p_cum = np.cumsum(ps / (ps.sum() + 1e-8))
         self.bins = [None, mild, med, heavy]
@@ -135,6 +136,9 @@ class RandomMotionBlur:
         return int(self.rng.randint(lo, hi + 1))
 
     def __call__(self, data):
+        # print("\n\n\n")
+        # print(self.p_clean)
+        # print("\n\n\n")
         img = data['image']
         r = self.rng.rand()
         idx = int(np.searchsorted(self.p_cum, r, side="right"))
@@ -145,7 +149,8 @@ class RandomMotionBlur:
             if L <= 0:
                 data['image'] = img.astype(np.float32, copy=False)
                 return data     # true "clean" if L==0
-            smear_dir = "left" if (self.rng.rand() < 0.5) else "right"
+            # smear_dir = "left" if (self.rng.rand() < 0.5) else "right"
+            smear_dir = "left"
             key = (L, smear_dir, self.profile, self.antialias)
             k = self._kernel_cache.get(key)
             if k is None:

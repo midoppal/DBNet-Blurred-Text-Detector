@@ -6,6 +6,7 @@ import yaml
 from tqdm import tqdm
 import numpy as np
 import cv2
+import time 
 
 from trainer import Trainer
 # tagged yaml objects
@@ -51,6 +52,12 @@ def main():
                         help='resize')
     parser.add_argument('--polygon', action='store_true',
                         help='output polygons if true')
+    
+    parser.add_argument('--save_prob_maps', action='store_true', default=True,
+                        help='Save per-image probability maps as PNGs')
+    parser.add_argument('--save_prob_maps_gray', action='store_true', default=False,
+                        help='Also save raw grayscale [0..255] PNG alongside heatmap')
+    
     parser.add_argument('--eager', '--eager_show', action='store_true', dest='eager_show',
                         help='Show iamges eagerly')
     parser.add_argument('--speed', action='store_true', dest='test_speed',
@@ -201,6 +208,134 @@ class Eval:
             else:
                 print(f"[WARNING] Could not load image for ground truth: {img_path}")
 
+    def _walk_tensors(self, obj, prefix="pred"):
+        """
+        Recursively yield (name, tensor) for any torch.Tensor with HxW spatial shape.
+        Supports dicts, lists/tuples, and plain tensors.
+        """
+        import torch
+        if torch.is_tensor(obj):
+            yield (prefix, obj)
+            return
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                for nk, nv in self._walk_tensors(v, f"{prefix}.{k}"):
+                    yield (nk, nv)
+        elif isinstance(obj, (list, tuple)):
+            for idx, v in enumerate(obj):
+                for nk, nv in self._walk_tensors(v, f"{prefix}[{idx}]"):
+                    yield (nk, nv)
+
+    def _save_map(self, arr01, out_png):
+        import cv2, numpy as np
+        arr01 = np.clip(arr01, 0.0, 1.0)
+        arr255 = (arr01 * 255.0).astype(np.uint8)
+        heat = cv2.applyColorMap(arr255, cv2.COLORMAP_JET)
+        cv2.imwrite(out_png, heat)
+
+    def save_all_spatial_maps(self, batch, pred, img_root='.', save_gray=False):
+        """
+        For each image in batch:
+        - Find every tensor in `pred` that has shape [N, C, H, W] or [N, H, W]
+        - For each channel, save a heatmap (and optional grayscale) resized to original image size if we can
+        - Filenames include the tensor 'path' (key/index chain) so you can identify the real prob map
+        """
+        import os, cv2, numpy as np, torch
+
+        out_dir = 'probability_map_predictions'
+        os.makedirs(out_dir, exist_ok=True)
+
+        B = batch['image'].size(0)
+
+        # Try reading originals once to get target sizes
+        imgs = []
+        sizes = []
+        for i in range(B):
+            filename = batch['filename'][i]
+            img_path = os.path.join(img_root, filename)
+            img = cv2.imread(img_path)
+            imgs.append(img)
+            if img is not None:
+                sizes.append(img.shape[:2])
+            else:
+                # fallback to batch['shape'] if present, else None
+                H = W = None
+                if 'shape' in batch:
+                    try:
+                        shp = batch['shape'][i]
+                        if hasattr(shp, 'cpu'): shp = shp.cpu().numpy()
+                        shp = np.array(shp).reshape(-1)
+                        if shp.size >= 2:
+                            H, W = int(shp[0]), int(shp[1])
+                    except:
+                        pass
+                sizes.append((H, W) if (H and W) else None)
+
+        saved = 0
+        # Walk every tensor in pred, try to interpret as spatial maps
+        for name, ten in self._walk_tensors(pred, "pred"):
+            if not torch.is_tensor(ten):
+                continue
+            # Expect [N,C,H,W] or [N,H,W]
+            d = ten.dim()
+            if d not in (3, 4):
+                continue
+
+            if d == 4:
+                N, C, H, W = ten.shape
+            else:
+                # [N,H,W] -> treat C=1
+                N, H, W = ten.shape
+                C = 1
+                ten = ten.unsqueeze(1)
+
+            # Per-image in batch
+            for i in range(min(B, ten.shape[0])):
+                base = os.path.splitext(os.path.basename(batch['filename'][i]))[0]
+                target_size = sizes[i]
+                img = imgs[i]
+
+                # Per channel
+                for c in range(min(C, 4)):  # cap to 4 channels per tensor to avoid explosion
+                    m = ten[i, c].detach().float().cpu()
+                    # If looks like logits, sigmoid; else clamp
+                    if (m.min() < 0) or (m.max() > 1):
+                        m = torch.sigmoid(m)
+                    m = torch.clamp(m, 0.0, 1.0)
+                    m_np = m.numpy()
+
+                    # Resize to original size if known
+                    if target_size is not None and all(target_size):
+                        Ht, Wt = target_size
+                        m_np_r = cv2.resize(m_np, (Wt, Ht), interpolation=cv2.INTER_CUBIC)
+                    else:
+                        m_np_r = m_np
+
+                    safe_name = (
+                        name.replace('/', '_')
+                            .replace('.', '_')
+                            .replace('[', '_').replace(']', '')
+                    )
+                    # Save heatmap overlay if we have the image and sizes match
+                    m255 = (np.clip(m_np_r, 0, 1) * 255.0).astype(np.uint8)
+                    heat = cv2.applyColorMap(m255, cv2.COLORMAP_JET)
+
+                    out_heat = os.path.join(out_dir, f"{base}__{safe_name}__ch{c}_heat.png")
+
+                    if img is not None and img.shape[:2] == heat.shape[:2]:
+                        overlay = cv2.addWeighted(img, 0.6, heat, 0.4, 0.0)
+                        cv2.imwrite(out_heat, overlay)
+                    else:
+                        cv2.imwrite(out_heat, heat)
+
+                    if save_gray:
+                        out_gray = os.path.join(out_dir, f"{base}__{safe_name}__ch{c}_gray.png")
+                        cv2.imwrite(out_gray, m255)
+
+                    saved += 1
+
+        # print(f"[INFO] Saved {saved} map image(s) to {out_dir}")
+
         
     def eval(self, visualize=False):
         self.init_torch_tensor()
@@ -226,6 +361,14 @@ class Eval:
                     img_root = os.path.join('datasets\icdar2015', 'test_images')  # fallback if not found
                     self.format_output(batch, output, img_root)
 
+                    # NEW: save probability maps if requested
+                    if self.args.get('save_prob_maps', False):
+                        self.save_all_spatial_maps(
+                            batch, pred,
+                            img_root=os.path.join('datasets', 'icdar2015', 'test_images'),
+                            save_gray=self.args.get('save_prob_maps_gray', False)
+                        )
+
 
                     raw_metric = self.structure.measurer.validate_measure(batch, output, is_output_polygon=self.args['polygon'], box_thresh=self.args['box_thresh'])
                     raw_metrics.append(raw_metric)
@@ -239,4 +382,7 @@ class Eval:
                     self.logger.info('%s : %f (%d)' % (key, metric.avg, metric.count))
 
 if __name__ == '__main__':
+    # start = time.time()
     main()
+    # end = time.time()
+    # print(f"Total runtime: {end - start:.2f} seconds")

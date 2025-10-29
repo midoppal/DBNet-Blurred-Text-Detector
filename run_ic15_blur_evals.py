@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+
 import os, sys, shutil, subprocess, re, time
 from pathlib import Path
 import signal
@@ -10,7 +10,10 @@ signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
 REPO_ROOT = Path(__file__).resolve().parent
 YAML_CFG  = "experiments/seg_detector/ic15_resnet50_deform_thre.yaml"
 # CKPT_PATH = "./pretrained/ic15_resnet50.pth"
-CKPT_PATH = "./workspace/SegDetectorModel-L1BalanceCELoss/model/final"
+# CKPT_PATH = "./workspace/SegDetectorModel-L1BalanceCELoss/model/model_epoch_100_minibatch_100500"
+# CKPT_PATH = "./workspace/SegDetectorModel-L1BalanceCELoss/model/final" 
+CKPT_PATH = "./workspace/SegDetectorModel-L1BalanceCELoss/model/300_plus150_plus300lr003_1_15"
+# CKPT_PATH = "./fine_tuned_models/0_30_left_100_epochs_10_90_split_model"
 
 DATASET_ROOT = REPO_ROOT / "datasets" / "icdar2015"
 TEST_LIST = DATASET_ROOT / "test_list.txt"
@@ -218,7 +221,13 @@ def main():
         t0 = time.time()
         # L, J = parse_LJ_from_name(src.name)
         # tag = f"length_{L}_jitter_{J}" if L is not None else src.name
+        # if (src.name != "blurred_test_images_length_30_left"):
+        if (src.name != "blurred_test_images_length_30_right"):
+            continue
         L, D = parse_length_dir_from_name(src.name)
+        # if D != "right" and src.name != "blurred_test_images_length_0":
+        #     print(f"[skip] {src.name}: only 'left' direction supported for now.")
+        #     continue
         tag = (f"length_{L}_{D}" if (L is not None and D) else
                (f"length_{L}" if L is not None else src.name))
         out_dir = RESULTS_DIR / tag

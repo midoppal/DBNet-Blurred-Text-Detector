@@ -3,11 +3,19 @@ import numpy as np
 from concern import Logger, AverageMeter
 from concern.config import Configurable
 from concern.icdar2015_eval.detection.iou import DetectionIoUEvaluator
+from concern.icdar2015_eval.detection.deteval import DetectionDetEvalEvaluator
 
 
 class QuadMeasurer(Configurable):
     def __init__(self, **kwargs):
         self.evaluator = DetectionIoUEvaluator()
+        # self.evaluator = DetectionDetEvalEvaluator()
+        # self.evaluator.match_mode = "one_to_one"   # or "one_to_one"
+        self.evaluator.match_mode = "pairwise"   # or "one_to_one"
+        import inspect
+        # print(f"[EVAL] Using {type(self.evaluator).__name__} mode={self.evaluator.match_mode} from {inspect.getmodule(self.evaluator).__file__}")
+        print(f"[EVAL] Using {type(self.evaluator).__name__} from {inspect.getmodule(self.evaluator).__file__}")
+        # assert "iou" in type(self.evaluator).__name__.lower(), "Not using IoU evaluator!"
 
     def measure(self, batch, output, is_output_polygon=False, box_thresh=0.6):
         '''
