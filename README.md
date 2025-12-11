@@ -1,8 +1,8 @@
-## DINO
-# Train
+# DINO
+## Train
 python dino_train.py
 
-# Inference:
+## Inference:
 - python dino_eval.py \
 --images /workspace/DBNet-Blurred-Text-Detector/datasets/icdar2015/test_images \
 --gts /workspace/DBNet-Blurred-Text-Detector/datasets/icdar2015/test_gts \
@@ -13,11 +13,11 @@ python dino_train.py
 --viz_out /workspace/DBNet-Blurred-Text-Detector/datasets/dino_text_boxes
 
 - Make sure ckpt model is in in the right path
-##DBNet
-# Train
+#DBNet
+## Train
 - python train.py experiments/seg_detector/ic15_resnet50_deform_thre.yaml --resume ./pretrained/ic15_resnet50.pth --num_gpus 1
 
-# Inference
+## Inference
 - python eval.py experiments/seg_detector/ic15_resnet50_deform_thre.yaml --resume ./pretrained/ic15_resnet50.pth
 - Replace "./pretrained/ic15_resnet50.pth" with finetuned model
 
