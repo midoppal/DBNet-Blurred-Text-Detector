@@ -1,28 +1,4 @@
 #!/usr/bin/env python3
-"""
-Pixel-wise evaluation of text probability heatmaps (e.g., from DINO or DBNet).
-
-Given:
-  - ICDAR15-style test images
-  - ICDAR15-style GT text files (with '###' don't-care regions)
-  - A folder of per-image heatmaps (PNG or NPY)
-
-This script:
-  1) Rasterizes polygons into GT masks (text vs background, with ignore regions).
-  2) Sweeps thresholds over [0,1].
-  3) For each threshold, computes dataset-level TP/FP/FN over *pixels*.
-  4) Prints Precision / Recall / F1 as a function of threshold.
-  5) Reports the best F1 and its threshold.
-
-Assumptions:
-  - Images are named like: img_1.jpg, img_2.jpg, ...
-  - GT files: datasets/icdar2015/test_gts/img_1.txt (standard ICDAR15 format).
-  - Heatmaps are aligned to the original image size.
-  - Heatmap filenames follow one of:
-      <stem>.png           (e.g., img_1.png)
-      <stem>_prob.png      (e.g., img_1_prob.png)
-      <stem>.npy           (HxW float32 in [0,1])
-"""
 
 import os
 import argparse
@@ -31,7 +7,6 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-# --------- GT parsing (matches your dino_eval / DBNet format) ---------
 def parse_icdar15_gt(txt_path: str):
     polys = []
     ignores = []
@@ -75,11 +50,9 @@ def polygons_to_masks(polys, ignores, h, w):
         else:
             cv2.fillPoly(mask_text, [pts], 1)
 
-    # If anything overlaps, treat as ignore
     mask_text[mask_ignore == 1] = 0
     return mask_text, mask_ignore
 
-# --------- Heatmap loading ---------
 def load_heatmap_for_image(stem: str, heatmap_dir: str, exts):
     """
     Try several naming patterns:
@@ -108,7 +81,6 @@ def load_heatmap_for_image(stem: str, heatmap_dir: str, exts):
                     return hm
     return None
 
-# --------- main evaluation ---------
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--images", required=True,
@@ -133,14 +105,13 @@ def main():
     if not img_paths:
         raise RuntimeError(f"No images found in {args.images} with ext {args.img_ext}")
 
-    # Global TP/FP/FN for each threshold
     sums = {thr: {"tp": 0, "fp": 0, "fn": 0} for thr in thresholds}
 
     num_used = 0
 
     for img_path in img_paths:
-        name = img_path.name                  # e.g., img_1.jpg
-        stem = img_path.stem                  # e.g., img_1
+        name = img_path.name           
+        stem = img_path.stem                 
 
         # Load image just to know H,W (should match heatmap)
         img = cv2.imread(str(img_path))
@@ -175,16 +146,16 @@ def main():
         mask_text, mask_ignore = polygons_to_masks(polys, ignores, h, w)
         valid = (mask_ignore == 0)
 
-        # If no valid text at all, skip (won't contribute; you can change this if you want)
         if mask_text.sum() == 0:
             continue
 
         num_used += 1
 
-        # Flatten for faster operations, but only where valid
+        #Flatten for faster operations, but only where valid
         gt_text = (mask_text == 1)
         gt_bg = ~gt_text
-        # We apply thresholds on full hm, but ignore pixels where valid==0
+      
+        #Apply thresholds on full hm
         for thr in thresholds:
             pred = hm >= thr
 
