@@ -23,10 +23,6 @@ define:
         representer:
             class: SegDetectorRepresenter
             max_candidates: 5000
-            # thresh: 0.3      # sweep 0.18–0.28
-            # box_thresh: 0.20  # sweep 0.55–0.70
-            # unclip_ratio: 2.0
-            # min_size: 1
         measurer:  
             class: QuadMeasurer
         visualizer:  
