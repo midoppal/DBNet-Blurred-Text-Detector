@@ -32,3 +32,6 @@ Note: Remember to update all file paths (datasets, checkpoints, and output direc
   --resume ./pretrained/ic15_resnet50.pth
 
 Note: Replace ./pretrained/ic15_resnet50.pth with the path to your fine-tuned DBNet model checkpoint.
+
+# Models
+- https://drive.google.com/drive/folders/1MnveYGSlHHK5PDudmO004dLQl9fDSXDD?usp=drive_link
