@@ -35,3 +35,6 @@ Note: Replace ./pretrained/ic15_resnet50.pth with the path to your fine-tuned DB
 
 # Models
 - https://drive.google.com/drive/folders/1MnveYGSlHHK5PDudmO004dLQl9fDSXDD?usp=drive_link
+
+# Note
+- blur_every_length.py produces the test sets for varying blur levels
