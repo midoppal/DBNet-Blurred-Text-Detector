@@ -6,21 +6,21 @@ from contextlib import contextmanager
 signal.signal(signal.SIGINT,  lambda *_: sys.exit(130))
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
 
-
+# ---------- CONFIG ----------
 REPO_ROOT = Path(__file__).resolve().parent
 YAML_CFG  = "experiments/seg_detector/ic15_resnet50_deform_thre.yaml"
-CKPT_PATH = "./pretrained/ic15_resnet50.pth"
+CKPT_PATH = "ic15_resnet50"
 
 DATASET_ROOT = REPO_ROOT / "datasets" / "icdar2015"
 TEST_LIST = DATASET_ROOT / "test_list.txt"
 TEST_IMAGES  = DATASET_ROOT / "test_images"
-ORIG_IMAGES  = DATASET_ROOT / "original_test_images" 
+ORIG_IMAGES  = DATASET_ROOT / "original_test_images"  
 
 
-BLUR_GLOB   = "blurred_test_images_length_*"
-RESULTS_DIR = REPO_ROOT / "eval_results_ic15"  
+BLUR_GLOB   = "blur_*"
+RESULTS_DIR = REPO_ROOT / "eval_results_ic15"   
 
-PYTHON_EXE  = sys.executable 
+PYTHON_EXE  = sys.executable  
 
 def is_windows() -> bool:
     return os.name == "nt"
@@ -38,10 +38,11 @@ def remove_path(p: Path):
                 ["cmd", "/c", "rmdir", "/S", "/Q", str(p)],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False
             )
-            time.sleep(0.1) 
+            time.sleep(0.1)  
         except Exception:
             pass
         return
+    # POSIX fallback
     if p.is_symlink():
         p.unlink(missing_ok=True)
     elif p.is_dir():
@@ -68,10 +69,6 @@ def copy_tree(src: Path, dst: Path):
     shutil.copytree(src, dst)
 
 def switch_test_images_to(src_dir: Path):
-    """
-    Point datasets/icdar2015/test_images to src_dir.
-    Try junction on Windows for speed; fall back to copy otherwise.
-    """
     if not src_dir.exists():
         raise FileNotFoundError(f"Source images not found: {src_dir}")
     remove_path(TEST_IMAGES)
@@ -81,12 +78,27 @@ def switch_test_images_to(src_dir: Path):
     return "copy"
 
 def run_eval():
-    cmd = [PYTHON_EXE, "eval.py", YAML_CFG, "--resume", CKPT_PATH]
+    cmd = [
+        PYTHON_EXE,
+        "eval.py",
+        YAML_CFG,
+        "--resume", CKPT_PATH,
+        "--thresh", "0.10",
+        "--box_thresh", "0.15",
+    ]
+
     if is_windows():
-        proc = subprocess.Popen(cmd, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                text=True, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+        proc = subprocess.Popen(
+            cmd, cwd=REPO_ROOT,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+        )
     else:
-        proc = subprocess.Popen(cmd, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc = subprocess.Popen(
+            cmd, cwd=REPO_ROOT,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True
+        )
     try:
         stdout, stderr = proc.communicate()
         return proc.returncode, stdout, stderr
@@ -112,20 +124,14 @@ def fmt_hms(seconds: float) -> str:
         return f"{m:02d}:{s:02d}"
 
 def parse_length_dir_from_name(name: str):
-    """
-    Accepts names like:
-      - blurred_test_images_length_0
-      - blurred_test_images_length_15_left
-      - blurred_test_images_length_15_right
-    Returns: (length:int | None, direction:str | None)
-    """
     m = re.search(r"length_(\d+)(?:_(left|right))?$", name, re.I)
     if not m:
         return None, None
     length = int(m.group(1))
-    direction = m.group(2) 
+    direction = m.group(2)  # None, 'left', or 'right'
     return length, direction
 
+# ---------------------------- .txt swapper ----------------------------
 def _read_canonical_names():
     return [l.strip() for l in TEST_LIST.read_text(encoding="utf-8").splitlines() if l.strip()]
 
@@ -151,11 +157,11 @@ def _filter_names_for_folder(blur_dir):
     filtered = []
     for nm in _read_canonical_names():
         if nm in avail:
-            filtered.append(nm) 
+            filtered.append(nm)  
         else:
             stem = Path(nm).stem
             if stem in avail:
-                filtered.append(avail[stem].name) 
+                filtered.append(avail[stem].name)  
     return filtered
 
 @contextmanager
@@ -186,9 +192,6 @@ def main():
 
     for idx, src in enumerate(blur_sets, start=1):
         t0 = time.time()
-
-        
-
         L, D = parse_length_dir_from_name(src.name)
 
         tag = (f"length_{L}_{D}" if (L is not None and D) else
@@ -229,7 +232,6 @@ def main():
         remaining = avg_per_set * (total_sets - idx)
         print(f"[PROGRESS] Completed {idx}/{total_sets} | {tag} | took {dt:.1f}s | elapsed {fmt_hms(elapsed)} | ETA {fmt_hms(remaining)}")
         (out_dir / "timing.txt").write_text(f"took_seconds={dt:.3f}\nelapsed_seconds={elapsed:.3f}\n", encoding="utf-8")
-
 
     if ORIG_IMAGES.exists():
         print("\n[FINAL] Restoring test_images to original_test_images...")
