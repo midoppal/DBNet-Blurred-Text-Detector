@@ -22,10 +22,12 @@ Note: Remember to update all file paths (datasets, checkpoints, and output direc
 
 # DBNet
 
+### Set up the same as DBNet's: https://github.com/MhLiao/DB/tree/master?tab=readme-ov-file
+
 ## Train
 - python train.py experiments/seg_detector/ic15_resnet50_deform_thre.yaml \
   --resume ./pretrained/ic15_resnet50.pth \
-  --num_gpus 1 300_plus150_plus300lr003_1_15 
+  --num_gpus 1  
 - There was an error in the paper. Paper's model was trained on lr = 0.007 for 300 epochs plus an additional 150 epochs. Then trained again for 300 epochs with a learning rate of .003
 
 ## Inference
