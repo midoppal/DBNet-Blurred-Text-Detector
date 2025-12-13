@@ -23,6 +23,7 @@ from training.optimizer_scheduler import OptimizerScheduler
 from concern.config import Configurable, Config
 import time
 
+
 def main():
     parser = argparse.ArgumentParser(description='Text Recognition Training')
     parser.add_argument('exp', type=str)
@@ -55,8 +56,14 @@ def main():
     
     parser.add_argument('--save_prob_maps', action='store_true', default=True,
                         help='Save per-image probability maps as PNGs')
-    parser.add_argument('--save_prob_maps_gray', action='store_true', default=False,
+    parser.add_argument('--save_prob_maps_gray', action='store_true', default=True,
                         help='Also save raw grayscale [0..255] PNG alongside heatmap')
+    parser.add_argument('--save_dbnet_prob_maps', action='store_true',
+                        help='Save DBNet text probability maps for each image')
+    parser.add_argument('--dbnet_prob_dir', type=str, default='datasets/dbnet_prob_maps',
+                        help='Output directory for DBNet probability maps')
+    parser.add_argument('--save_dbnet_prob_npy', action='store_true',
+                        help='Also save raw float32 .npy maps')
     
     parser.add_argument('--eager', '--eager_show', action='store_true', dest='eager_show',
                         help='Show iamges eagerly')
@@ -144,7 +151,7 @@ class Eval:
         
     def format_output(self, batch, output, img_root='.'):
         batch_boxes, batch_scores = output
-        os.makedirs('predictions', exist_ok=True)  # ✨ Create output folder for images
+        os.makedirs('predictions', exist_ok=True)  
 
         for index in range(batch['image'].size(0)):
             original_shape = batch['shape'][index]
@@ -155,9 +162,13 @@ class Eval:
             boxes = batch_boxes[index]
             scores = batch_scores[index]
 
-            # ✨ Load original image (assumes filename is a valid image path)
-            # ✨ Construct full path to the image
+    
             img_path = os.path.join(img_root, filename)
+
+            ###
+            img_path = img_path.replace("\\", "/")
+            ###
+            
             image_bgr = cv2.imread(img_path)
             if image_bgr is None:
                 print(f"[WARNING] Could not load image: {img_path}")
@@ -171,7 +182,7 @@ class Eval:
                         score = scores[i]
                         res.write(result + ',' + str(score) + "\n")
                         
-                        # ✨ Draw polygons
+                       
                         cv2.polylines(image_bgr, [box.reshape(-1, 1, 2)], isClosed=True, color=(0, 255, 0), thickness=2)
             else:
                 with open(result_file_path, 'wt') as res:
@@ -183,16 +194,12 @@ class Eval:
                         result = ",".join([str(x) for x in box])
                         res.write(result + ',' + str(score) + "\n")
 
-                        # ✨ Draw rectangles as polygons
                         cv2.polylines(image_bgr, [box.reshape(-1, 1, 2)], isClosed=True, color=(0, 255, 0), thickness=2)
 
-            # ✨ Save output image with bounding boxes
             out_img_name = os.path.splitext(os.path.basename(filename))[0] + '_pred.jpg'
             out_img_path = os.path.join('predictions', out_img_name)
             cv2.imwrite(out_img_path, image_bgr)
-            # print(f"[INFO] Saved prediction image to {out_img_path}")
 
-            # ✨ Also save ground truth boxes
             os.makedirs('ground_truth', exist_ok=True)
             image_gt = cv2.imread(img_path)
             if image_gt is not None:
@@ -209,10 +216,7 @@ class Eval:
                 print(f"[WARNING] Could not load image for ground truth: {img_path}")
 
     def _walk_tensors(self, obj, prefix="pred"):
-        """
-        Recursively yield (name, tensor) for any torch.Tensor with HxW spatial shape.
-        Supports dicts, lists/tuples, and plain tensors.
-        """
+
         import torch
         if torch.is_tensor(obj):
             yield (prefix, obj)
@@ -225,6 +229,74 @@ class Eval:
             for idx, v in enumerate(obj):
                 for nk, nv in self._walk_tensors(v, f"{prefix}[{idx}]"):
                     yield (nk, nv)
+    def save_dbnet_prob_maps(self, batch, pred, img_root='.', out_dir='dbnet_prob_maps', save_npy=False):
+
+        import os, cv2, numpy as np, torch
+
+        os.makedirs(out_dir, exist_ok=True)
+
+    
+        prob_map = None
+        if isinstance(pred, dict):
+            for key in ['binary', 'probability', 'prob_map', 'preds']:
+                if key in pred and torch.is_tensor(pred[key]):
+                    prob_map = pred[key]
+                    prob_name = key
+                    break
+
+        if prob_map is None:
+            for name, ten in self._walk_tensors(pred, "pred"):
+                if torch.is_tensor(ten) and ten.dim() in (3, 4):
+                    prob_map = ten
+                    prob_name = name
+                    break
+
+        if prob_map is None:
+            print("[WARN] Could not find a suitable probability map in pred; skipping save_dbnet_prob_maps.")
+            return
+
+        if prob_map.dim() == 3:  
+            prob_map = prob_map.unsqueeze(1)
+        elif prob_map.dim() == 4 and prob_map.size(1) > 1:
+            prob_map = prob_map[:, 0:1, :, :]
+
+        B, C, H, W = prob_map.shape
+        assert C == 1, f"Expected single-channel prob map, got C={C}"
+
+        for i in range(B):
+            filename = batch['filename'][i]
+            base = os.path.splitext(os.path.basename(filename))[0]
+
+            img_path = os.path.join(img_root, filename)
+            img_path = img_path.replace("\\", "/")
+            img_bgr = cv2.imread(img_path)
+            if img_bgr is None:
+                print(f"[WARN] Could not load image for prob map: {img_path}")
+                continue
+            Ht, Wt = img_bgr.shape[:2]
+
+            m = prob_map[i, 0].detach().float().cpu()
+
+            if (m.min() < 0) or (m.max() > 1):
+                m = torch.sigmoid(m)
+            m = torch.clamp(m, 0.0, 1.0)
+            m_np = m.numpy()
+
+            if (Ht, Wt) != (H, W):
+                m_np = cv2.resize(m_np, (Wt, Ht), interpolation=cv2.INTER_CUBIC)
+
+            prob_u8 = (np.clip(m_np, 0, 1) * 255.0).astype(np.uint8)
+            out_prob = os.path.join(out_dir, f"{base}_prob.png")
+            cv2.imwrite(out_prob, prob_u8)
+
+            heat = cv2.applyColorMap(prob_u8, cv2.COLORMAP_JET)
+            overlay = cv2.addWeighted(img_bgr, 0.5, heat, 0.5, 0.0)
+            out_overlay = os.path.join(out_dir, f"{base}_overlay.png")
+            cv2.imwrite(out_overlay, overlay)
+
+            if save_npy:
+                out_npy = os.path.join(out_dir, f"{base}_prob.npy")
+                np.save(out_npy, m_np.astype(np.float32))
 
     def _save_map(self, arr01, out_png):
         import cv2, numpy as np
@@ -234,12 +306,6 @@ class Eval:
         cv2.imwrite(out_png, heat)
 
     def save_all_spatial_maps(self, batch, pred, img_root='.', save_gray=False):
-        """
-        For each image in batch:
-        - Find every tensor in `pred` that has shape [N, C, H, W] or [N, H, W]
-        - For each channel, save a heatmap (and optional grayscale) resized to original image size if we can
-        - Filenames include the tensor 'path' (key/index chain) so you can identify the real prob map
-        """
         import os, cv2, numpy as np, torch
 
         out_dir = 'probability_map_predictions'
@@ -247,7 +313,6 @@ class Eval:
 
         B = batch['image'].size(0)
 
-        # Try reading originals once to get target sizes
         imgs = []
         sizes = []
         for i in range(B):
@@ -258,7 +323,6 @@ class Eval:
             if img is not None:
                 sizes.append(img.shape[:2])
             else:
-                # fallback to batch['shape'] if present, else None
                 H = W = None
                 if 'shape' in batch:
                     try:
@@ -272,11 +336,9 @@ class Eval:
                 sizes.append((H, W) if (H and W) else None)
 
         saved = 0
-        # Walk every tensor in pred, try to interpret as spatial maps
         for name, ten in self._walk_tensors(pred, "pred"):
             if not torch.is_tensor(ten):
                 continue
-            # Expect [N,C,H,W] or [N,H,W]
             d = ten.dim()
             if d not in (3, 4):
                 continue
@@ -284,27 +346,22 @@ class Eval:
             if d == 4:
                 N, C, H, W = ten.shape
             else:
-                # [N,H,W] -> treat C=1
                 N, H, W = ten.shape
                 C = 1
                 ten = ten.unsqueeze(1)
 
-            # Per-image in batch
             for i in range(min(B, ten.shape[0])):
                 base = os.path.splitext(os.path.basename(batch['filename'][i]))[0]
                 target_size = sizes[i]
                 img = imgs[i]
 
-                # Per channel
-                for c in range(min(C, 4)):  # cap to 4 channels per tensor to avoid explosion
+                for c in range(min(C, 4)):  
                     m = ten[i, c].detach().float().cpu()
-                    # If looks like logits, sigmoid; else clamp
                     if (m.min() < 0) or (m.max() > 1):
                         m = torch.sigmoid(m)
                     m = torch.clamp(m, 0.0, 1.0)
                     m_np = m.numpy()
 
-                    # Resize to original size if known
                     if target_size is not None and all(target_size):
                         Ht, Wt = target_size
                         m_np_r = cv2.resize(m_np, (Wt, Ht), interpolation=cv2.INTER_CUBIC)
@@ -316,7 +373,6 @@ class Eval:
                             .replace('.', '_')
                             .replace('[', '_').replace(']', '')
                     )
-                    # Save heatmap overlay if we have the image and sizes match
                     m255 = (np.clip(m_np_r, 0, 1) * 255.0).astype(np.uint8)
                     heat = cv2.applyColorMap(m255, cv2.COLORMAP_JET)
 
@@ -334,8 +390,6 @@ class Eval:
 
                     saved += 1
 
-        # print(f"[INFO] Saved {saved} map image(s) to {out_dir}")
-
         
     def eval(self, visualize=False):
         self.init_torch_tensor()
@@ -344,6 +398,9 @@ class Eval:
         all_matircs = {}
         model.eval()
         vis_images = dict()
+        
+        total_infer_time = 0.0   
+        total_images = 0        
         with torch.no_grad():
             for _, data_loader in self.data_loaders.items():
                 raw_metrics = []
@@ -351,22 +408,45 @@ class Eval:
                     if self.args['test_speed']:
                         time_cost = self.report_speed(model, batch, times=50)
                         continue
+
+                    start_full = time.time()
+                    
                     pred = model.forward(batch, training=False)
-                    output = self.structure.representer.represent(batch, pred, is_output_polygon=self.args['polygon']) 
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                    
+                    output = self.structure.representer.represent(
+                        batch, pred, is_output_polygon=self.args['polygon']
+                    )
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                    
+                    full_time = time.time() - start_full
+                    
+                    batch_size = batch['image'].size(0)
+                    total_infer_time += full_time
+                    total_images += batch_size
+
                     if not os.path.isdir(self.args['result_dir']):
                         os.mkdir(self.args['result_dir'])
 
 
-                    # self.format_output(batch, output)
-                    img_root = os.path.join('datasets\icdar2015', 'test_images')  # fallback if not found
+                    img_root = os.path.join('datasets\icdar2015', 'test_images') 
                     self.format_output(batch, output, img_root)
 
-                    # NEW: save probability maps if requested
                     if self.args.get('save_prob_maps', False):
                         self.save_all_spatial_maps(
                             batch, pred,
                             img_root=os.path.join('datasets', 'icdar2015', 'test_images'),
                             save_gray=self.args.get('save_prob_maps_gray', False)
+                        )
+                    if self.args.get('save_dbnet_prob_maps', False):
+                        self.save_dbnet_prob_maps(
+                            batch,
+                            pred,
+                            img_root=os.path.join('datasets', 'icdar2015', 'test_images'),
+                            out_dir=self.args.get('dbnet_prob_dir', 'dbnet_prob_maps'),
+                            save_npy=self.args.get('save_dbnet_prob_npy', False)
                         )
 
 
@@ -379,10 +459,15 @@ class Eval:
                         vis_images.update(vis_image)
                 metrics = self.structure.measurer.gather_measure(raw_metrics, self.logger)
                 for key, metric in metrics.items():
-                    self.logger.info('%s : %f (%d)' % (key, metric.avg, metric.count))
+                    self.logger.info('%s : %f (%d)' % (key, metric.avg, metric.count)) 
+        if total_images > 0:
+            ms_per_img = (total_infer_time / total_images) * 1000.0
+            fps = total_images / total_infer_time
+            self.logger.info(
+                f"DBNet Full Pipeline Speed: {ms_per_img:.2f} ms/img, FPS = {fps:.2f} over {total_images} images"
+            )
+
 
 if __name__ == '__main__':
-    # start = time.time()
     main()
-    # end = time.time()
-    # print(f"Total runtime: {end - start:.2f} seconds")
+
