@@ -20,18 +20,17 @@ def _linear_to_srgb(img):
     a = 0.055
     return np.where(img <= 0.0031308, img*12.92, (1 + a) * (img ** (1/2.4)) - a)
 
-# ---------- profile weights ----------
+
 def _profile_weights(n: int, profile: str) -> np.ndarray:
     n = max(1, int(n))
-    t = np.linspace(0, 1, n, dtype=np.float32)  # one-sided domain
+    t = np.linspace(0, 1, n, dtype=np.float32) 
     if profile == "box":
         w = np.ones_like(t, dtype=np.float32)
     elif profile == "gaussian":
-        # smooth falloff; map t in [0,1] -> [-1,1] then apply gaussian
+       
         u = (t * 2.0 - 1.0)
         w = np.exp(-0.5 * (u/0.6)**2).astype(np.float32)
     elif profile == "cosine":
-        # raised-cosine over [0,1]: high at 0, low at 1
         w = (np.cos(t * math.pi) * 0.5 + 0.5).astype(np.float32)
     else:
         raise ValueError(f"Unknown profile: {profile}")
@@ -42,16 +41,14 @@ def _profile_weights(n: int, profile: str) -> np.ndarray:
         w /= s
     return w
 
-# ---------- kernel builder (one-sided, horizontal) ----------
 def _one_sided_horizontal_kernel(length: int, smear_dir: str, profile: str = "gaussian",
                                  antialias: bool = True) -> np.ndarray:
     L = max(1, int(length))
     k = 2 * L + 1
     kernel = np.zeros((k, k), dtype=np.float32)
-    c = L  # center index
+    c = L  
 
-    # Build 1D horizontal weights on [0..L] (inclusive of center position 0)
-    w = _profile_weights(L + 1, profile)  # positions: 0,1,2,...,L
+    w = _profile_weights(L + 1, profile)  
 
     if smear_dir == "right":
         for i, wi in enumerate(w):           
@@ -68,28 +65,24 @@ def _one_sided_horizontal_kernel(length: int, smear_dir: str, profile: str = "ga
     else:
         raise ValueError("smear_dir must be 'left' or 'right'")
 
-    # Gentle 2D antialias to reduce ringing
     if antialias and k >= 5:
         kernel = cv2.GaussianBlur(kernel, (3, 3), 0.5, borderType=cv2.BORDER_REPLICATE)
 
     s = kernel.sum()
     if s > 0:
         kernel /= s
-    # ensure odd shape stays odd (already is)
     return kernel
 
-# ---------- image ops ----------
 def _apply_motion_blur(img_bgr: np.ndarray, kernel: np.ndarray, gamma_aware: bool=True) -> np.ndarray:
-    # Detect input range & normalize to [0,1] float for filtering
-    if img_bgr.dtype.kind in 'ui':        # uint8/uint16
+    if img_bgr.dtype.kind in 'ui':      
         img = img_bgr.astype(np.float32) / 255.0
         scale_back = 255.0
     else:
         img = img_bgr.astype(np.float32)
-        if img.max() > 1.5:               # looks like 0..255 floats
+        if img.max() > 1.5:              
             img /= 255.0
             scale_back = 255.0
-        else:                              # already 0..1 floats
+        else:                            
             scale_back = 1.0
 
     if gamma_aware:
@@ -104,7 +97,6 @@ def _apply_motion_blur(img_bgr: np.ndarray, kernel: np.ndarray, gamma_aware: boo
         for c in range(3):
             out[..., c] = cv2.filter2D(img[..., c], -1, kernel, borderType=cv2.BORDER_REPLICATE)
 
-    # Return float32 in 0..255 for NormalizeImage
     out = np.clip(out * scale_back, 0.0, 255.0).astype(np.float32)
     return out
 
@@ -114,18 +106,15 @@ class RandomMotionBlur:
                  mild=(1,10), med=(1,15), heavy=(16,30),
                  profile="gaussian", gamma_aware=True, antialias=True, seed=None,
                  **kwargs):
-        # Tolerate extra framework-specific keys
         kwargs.pop('class', None)
         kwargs.pop('type', None)
-        # print("INIT VALUES:", p_clean, p_mild, p_med, p_heavy)
-        # print("KWARGS:", kwargs)
+
         ps = np.array([p_clean, p_mild, p_med, p_heavy], np.float32)
         self.p_cum = np.cumsum(ps / (ps.sum() + 1e-8))
         self.bins = [None, mild, med, heavy]
         self.profile, self.gamma_aware, self.antialias = profile, gamma_aware, antialias
         self.rng = np.random.RandomState(seed)
-
-        # small kernel cache to avoid rebuilding within a batch
+                     
         self._kernel_cache = {}
 
     def _sample_length(self, lo_hi):
@@ -136,9 +125,6 @@ class RandomMotionBlur:
         return int(self.rng.randint(lo, hi + 1))
 
     def __call__(self, data):
-        # print("\n\n\n")
-        # print(self.p_clean)
-        # print("\n\n\n")
         img = data['image']
         r = self.rng.rand()
         idx = int(np.searchsorted(self.p_cum, r, side="right"))
@@ -148,8 +134,7 @@ class RandomMotionBlur:
             L = self._sample_length(lo_hi)
             if L <= 0:
                 data['image'] = img.astype(np.float32, copy=False)
-                return data     # true "clean" if L==0
-            # smear_dir = "left" if (self.rng.rand() < 0.5) else "right"
+                return data     
             smear_dir = "left"
             key = (L, smear_dir, self.profile, self.antialias)
             k = self._kernel_cache.get(key)
