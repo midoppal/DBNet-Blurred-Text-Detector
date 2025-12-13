@@ -5,24 +5,16 @@ from tqdm import tqdm
 
 from experiment import Experiment
 from data.data_loader import DistributedSampler
-# ===================== [BEGIN] Validation scoring & best checkpoint =====================
+
 import math
 VAL_SCORE_MODE = os.environ.get("VAL_SCORE_MODE", "avg_blur").lower()
 VAL_SCORE_KEYS = os.environ.get("VAL_SCORE_KEYS", "").strip()
 
 def _compute_val_score(all_metrics, logger=None):
-    """
-    all_metrics: dict like {"icdar2015_clean/precision": Metric, "icdar2015_clean/fmeasure": Metric, ...}
-    Returns a single float to decide "best".
-    Priority:
-      1) If VAL_SCORE_KEYS provided -> average those keys (must exist).
-      2) Else if VAL_SCORE_MODE == "avg_blur" -> average fmeasure over all keys that contain '_blur_'.
-      3) Else if VAL_SCORE_MODE == "clean"    -> use '...clean/fmeasure' (or average all '...clean/*fmeasure').
-      4) Else ('avg_all')                    -> average all '*fmeasure' keys across loaders.
-    """
+
     def get(k): return all_metrics[k].avg if k in all_metrics else None
 
-    # 1) Explicit keys
+    
     if VAL_SCORE_KEYS:
         keys = [k.strip() for k in VAL_SCORE_KEYS.split(",") if k.strip()]
         vals = [get(k) for k in keys]
@@ -30,7 +22,7 @@ def _compute_val_score(all_metrics, logger=None):
         if vals:
             return sum(vals) / len(vals)
 
-    # Collect all fmeasure keys
+
     f1_items = [(k, m.avg) for k, m in all_metrics.items() if k.endswith("/fmeasure") and math.isfinite(m.avg)]
 
     if VAL_SCORE_MODE == "avg_blur":
@@ -42,7 +34,7 @@ def _compute_val_score(all_metrics, logger=None):
         if clean_vals:
             return sum(clean_vals) / len(clean_vals)
 
-    # Fallback: average all f1
+   
     if f1_items:
         return sum(v for _, v in f1_items) / len(f1_items)
 
@@ -50,9 +42,9 @@ def _compute_val_score(all_metrics, logger=None):
     if logger:
         logger.info("[val-score] No fmeasure metrics found; defaulting to 0.0")
     return 0.0
-# ====================== [END] Validation scoring & best checkpoint ======================
+# END Validation scoring and best checkpoint 
 
-# ===================== [BEGIN PATCH] Validation history dump helpers =====================
+# Validation history dump helpers 
 import math, csv
 
 VAL_DUMP_DIR = os.environ.get("VAL_DUMP_DIR", "val_history")
@@ -108,22 +100,21 @@ def _dump_validation_metrics(all_metrics, epoch, step, run_root, logger=None):
             ])
     if logger:
         logger.info(f"[val-dump] wrote {snap_dir} and appended {csv_path}")
-# ====================== [END PATCH] Validation history dump helpers ======================
 
-# ======================== [BEGIN} Freeze & LR-mult helpers ========================
+
+
 import torch.nn as nn
 
-# How long to keep early stages frozen
+
 FREEZE_BACKBONE_EPOCHS = int(os.environ.get("FREEZE_BACKBONE_EPOCHS", "10"))
 
-# Which backbone stages to freeze (comma-separated). Default matches torchvision ResNet.
-# Examples: "conv1,bn1,layer1,layer2"  or  "stem,stage1,stage2"  (depending on your backbone)
+
 FREEZE_STAGES = [
     s.strip() for s in os.environ.get("FREEZE_STAGES", "conv1,bn1,layer1,layer2").split(",")
     if s.strip()
 ]
 
-# Optional LR multiplier for the *entire* backbone param group (you already support this)
+
 BACKBONE_LR_MULT = float(os.environ.get("BACKBONE_LR_MULT", "1"))
 
 def _get_model_root(module):
@@ -137,19 +128,19 @@ def _get_backbone(module):
     """
     m = _get_model_root(module)
 
-    # direct/common attributes
+
     for name in ("backbone", "body", "encoder", "feature_extractor", "resnet"):
         if hasattr(m, name):
             return getattr(m, name)
 
-    # nested: model.backbone
+
     if hasattr(m, "model"):
         mm = _get_model_root(m.model)
         for name in ("backbone", "body", "encoder", "feature_extractor", "resnet"):
             if hasattr(mm, name):
                 return getattr(mm, name)
 
-    # heuristic: child name match
+    
     for name, child in m.named_children():
         if name in ("backbone", "body", "encoder", "feature_extractor", "resnet"):
             return child
@@ -169,7 +160,7 @@ def set_backbone_stages_trainable(model, stages, trainable: bool, freeze_bn: boo
         if logger: logger.info("[freeze] backbone not found; skipping")
         return
 
-    # map stage names to actual submodules (top-level children cover ResNet nicely)
+    
     name_to_child = dict(bb.named_children())
 
     changed = []
@@ -178,17 +169,14 @@ def set_backbone_stages_trainable(model, stages, trainable: bool, freeze_bn: boo
             _toggle_requires_grad(name_to_child[name], trainable)
             changed.append(name)
 
-    # Special-case: if conv1 mentioned and bb has a paired bn1 not already covered
     if ("conv1" in stages) and hasattr(bb, "bn1"):
         _toggle_requires_grad(bb.bn1, trainable)
         if "bn1" not in changed:
             changed.append("bn1")
 
-    # Optionally freeze BN running stats inside the affected stages
     if freeze_bn:
         def _maybe_set_bn_mode(mod, stage_trainable):
             if isinstance(mod, nn.modules.batchnorm._BatchNorm):
-                # eval() to stop updating running stats when frozen, train() when unfrozen
                 mod.eval() if not stage_trainable else mod.train()
 
         for name in changed:
@@ -199,7 +187,6 @@ def set_backbone_stages_trainable(model, stages, trainable: bool, freeze_bn: boo
 
     if logger:
         state = "UNFROZEN" if trainable else "FROZEN"
-        # Count only affected params
         def _count_params(mod):
             total = sum(p.numel() for p in mod.parameters())
             train = sum(p.numel() for p in mod.parameters() if p.requires_grad)
@@ -213,7 +200,7 @@ def set_backbone_stages_trainable(model, stages, trainable: bool, freeze_bn: boo
                 msg_bits.append(f"{name}({tr}/{tot})")
         msg = ", ".join(msg_bits) if msg_bits else "none"
         logger.info(f"[freeze] stages {state}: {msg}")
-# ========================= [END] Freeze & LR-mult helpers =========================
+
 
 
 class Trainer:
@@ -246,7 +233,6 @@ class Trainer:
             self.device, self.experiment.distributed, self.experiment.local_rank)
         return model
 
-    # ======================== [BEGIN] Respect LR multipliers per param-group ========================
     def update_learning_rate(self, optimizer, epoch, step):
         """
         Apply scheduler LR to each param group, honoring optional 'lr_mult' on groups.
@@ -259,14 +245,13 @@ class Trainer:
             mult = group.get('lr_mult', 1.0)
             group['lr'] = lr * mult
         self.current_lr = lr
-    # ========================= [END] Respect LR multipliers per param-group =========================
 
     def train(self):
         self.logger.report_time('Start')
         self.logger.args(self.experiment)
         self.logger.info(f"[paths] run_dir={self.logger.log_dir}  model_dir={self.model_saver.dir_path}")
         model = self.init_model()
-        # print(list(_get_backbone(model).named_children()))
+        
         train_data_loader = self.experiment.train.data_loader
         if self.experiment.validation:
             validation_loaders = self.experiment.validation.data_loaders
@@ -280,27 +265,26 @@ class Trainer:
         else:
             epoch, iter_delta = 0, 0  # safety default
         
-        # ======================== [BEGIN] Build optimizer with optional backbone LR group ========================
+        # Build optimizer with optional backbone LR group
 
         if BACKBONE_LR_MULT != 1.0:
             bb_params, head_params = [], []
             for name, p in model.named_parameters():
                 if not p.requires_grad:
                     continue
-                # Match both 'backbone.' and 'model.backbone.' name patterns
+    
                 if ("backbone." in name) or (".backbone." in name) or name.startswith("backbone"):
                     bb_params.append(p)
                 else:
                     head_params.append(p)
 
-            if len(bb_params) == 0:  # fallback, in case names don't include 'backbone'
+            if len(bb_params) == 0: 
                 bb = _get_backbone(model)
                 if bb is not None:
                     bb_ids = {id(p) for p in bb.parameters()}
                     for p in model.parameters():
                         (bb_params if id(p) in bb_ids else head_params).append(p)
                 else:
-                    # couldn't find backbone – just use a single group to avoid surprises
                     bb_params, head_params = [], list(model.parameters())
 
             param_groups = []
@@ -314,35 +298,33 @@ class Trainer:
         else:
             optimizer = self.experiment.train.scheduler.create_optimizer(model.parameters())
             self.logger.info("[optimizer] single LR for all params (BACKBONE_LR_MULT=1.0)")
-        # ========================= [END] Build optimizer with optional backbone LR group =========================
+   
 
         self.logger.report_time('Init')
 
-        # ======================== [BEGIN] Initial backbone freeze window ========================
-        # ---- Per-epoch stage-freeze scheduler ----
+        # Initial backbone freeze window 
         def _maybe_stage_freeze(epoch_now):
             if FREEZE_BACKBONE_EPOCHS <= 0 or not FREEZE_STAGES:
                 return
-            # Freeze early epochs
+          
             if epoch_now < FREEZE_BACKBONE_EPOCHS and not self._stages_frozen:
                 set_backbone_stages_trainable(model, FREEZE_STAGES, trainable=False, freeze_bn=True, logger=self.logger)
                 self._stages_frozen = True
                 self.logger.info(f"[freeze] freezing stages {FREEZE_STAGES} for epochs [0..{FREEZE_BACKBONE_EPOCHS-1}]")
-            # Unfreeze at boundary
+            
             elif epoch_now >= FREEZE_BACKBONE_EPOCHS and self._stages_frozen:
                 set_backbone_stages_trainable(model, FREEZE_STAGES, trainable=True, freeze_bn=True, logger=self.logger)
                 self._stages_frozen = False
                 self.logger.info(f"[freeze] unfroze stages at epoch {epoch_now}")
 
-        # Call once for epoch 0 (right after model is built/restored)
+    
         _maybe_stage_freeze(epoch)
-        # ========================= [END] Initial backbone freeze window =========================
+    
 
         model.train()
         while True:
-            # ======================== [BEGIN] Unfreeze when we reach the target epoch ========================
+            # Unfreeze when we reach the target epoch 
             _maybe_stage_freeze(epoch)
-            # ========================= [END] Unfreeze when we reach the target epoch =========================
 
             self.logger.info('Training epoch ' + str(epoch))
             self.logger.epoch(epoch)
@@ -356,7 +338,7 @@ class Trainer:
                 if self.experiment.validation and\
                         self.steps % self.experiment.validation.interval == 0 and\
                         self.steps > self.experiment.validation.exempt:
-                    # self.validate(validation_loaders, model, epoch, self.steps)
+                
                     self.logger.info(f"[val] firing at step={self.steps} (interval={self.experiment.validation.interval})")
                     val_metrics = self.validate(validation_loaders, model, epoch, self.steps)
                     run_root = os.path.dirname(self.model_saver.dir_path)  # parent of 'model' dir for this run
@@ -390,8 +372,7 @@ class Trainer:
             epoch += 1
             if epoch > self.experiment.train.epochs:
                 self.model_saver.save_checkpoint(model, 'final')
-                # if self.experiment.validation:
-                    # self.validate(validation_loaders, model, epoch, self.steps)
+
                 if self.experiment.validation:
                     val_metrics = self.validate(validation_loaders, model, epoch, self.steps)
                     run_root = os.path.dirname(self.model_saver.dir_path)
@@ -476,13 +457,11 @@ class Trainer:
             pred = model.forward(batch, training=False)
             output = self.structure.representer.represent(batch, pred)
 
-            # Accept measurers that return either raw_metric or (raw_metric, interested)
             res = self.structure.measurer.validate_measure(batch, output)
             if isinstance(res, tuple):
                 if len(res) == 2:
                     raw_metric, interested = res
                 else:
-                    # tolerate odd cases like (raw_metric,) or extra values
                     raw_metric = res[0]
                     interested = None
             else:
@@ -490,7 +469,6 @@ class Trainer:
 
             raw_metrics.append(raw_metric)
 
-            # Only try to visualize if we actually have 'interested'
             if visualize and self.structure.visualizer and interested is not None:
                 vis_image = self.structure.visualizer.visualize(batch, output, interested)
                 vis_images.update(vis_image)
