@@ -38,6 +38,5 @@ Note: Replace ./pretrained/ic15_resnet50.pth with the path to your fine-tuned DB
 
 # Note
 - blur_every_length.py produces the test sets for varying blur levels
-- run_ic15_blur_evals.py runs the model's inference over all blur levels
 
 Remember to change paths
